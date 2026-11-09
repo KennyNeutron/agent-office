@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, ChevronDown, Command, Info, Wifi, WifiOff, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, ChevronDown, Command, Info, Moon, Sun, Wifi, WifiOff, X } from 'lucide-react';
 import { demoTasks, type AgentId, type OfficeAgent, type OfficeTask, type ProviderId, type ServerState } from './types';
 import { AgentsContext } from './agents';
 import { useLanguage } from './locales/i18n';
@@ -21,19 +21,61 @@ const PUBLIC_DEMO = import.meta.env.MODE === 'public-demo';
 const EMPTY_AGENTS: OfficeAgent[] = [];
 type Toast = { message: string; kind: 'success' | 'error' | 'info' };
 
+const DEMO_HISTORY_KEY = 'agent-office-demo-history';
+const DEMO_HISTORY_LIMIT = 100;
+
+function readPreference(key: string): string | null {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+
+function savePreference(key: string, value: string) {
+  try { localStorage.setItem(key, value); } catch { /* Storage disabled or full. */ }
+}
+
+function loadDemoHistory(): OfficeTask[] {
+  const samples = demoTasks();
+  try {
+    const saved: unknown = JSON.parse(readPreference(DEMO_HISTORY_KEY) || '[]');
+    if (Array.isArray(saved)) {
+      const ids = new Set(bundledDemoIds);
+      const completed = saved.filter((task): task is OfficeTask => {
+        if (!isOfficeTask(task) || task.status !== 'completed' || !task.id.startsWith('demo-') || ids.has(task.id)) return false;
+        ids.add(task.id);
+        return true;
+      });
+      return [...completed.slice(0, DEMO_HISTORY_LIMIT), ...samples];
+    }
+  } catch { /* Invalid saved history. */ }
+  return samples;
+}
+
 export default function App() {
   const { t: tr, formatTime } = useLanguage();
+  const [darkMode, setDarkMode] = useState(() => {
+    try { return localStorage.getItem('agent-office-theme') === 'dark'; } catch { return false; }
+  });
+  useEffect(() => {
+    document.documentElement.dataset.uiTheme = darkMode ? 'dark' : 'light';
+  }, [darkMode]);
+
+  function toggleTheme() {
+    const next = !darkMode;
+    setDarkMode(next);
+    try { localStorage.setItem('agent-office-theme', next ? 'dark' : 'light'); } catch { /* Storage disabled */ }
+  }
+
   const [view, setView] = useState<View>('studio');
-  const [selected, setSelected] = useState<AgentId>('nova');
+  const [selected, setSelected] = useState<AgentId>(() => readPreference('agent-office-selected-agent') || 'nova');
   const [selectedTask, setSelectedTask] = useState<string | null>(null);
-  const [demo, setDemo] = useState(true);
-  const [demoData, setDemoData] = useState(demoTasks);
+  const [demo, setDemo] = useState(() => PUBLIC_DEMO || readPreference('agent-office-mode') !== 'live');
+  const [demoData, setDemoData] = useState(loadDemoHistory);
   const [server, setServer] = useState<ServerState | null>(null);
   const [online, setOnline] = useState(false);
   const [loading, setLoading] = useState(!PUBLIC_DEMO);
   const [stateError, setStateError] = useState(false);
   const [demoRoster, setDemoRoster] = useState<OfficeAgent[]>(loadDemoRoster);
-  const [workspace, setWorkspace] = useState('');
+  const [savedWorkspace] = useState(() => readPreference('agent-office-workspace'));
+  const [workspace, setWorkspace] = useState(savedWorkspace ?? '');
   const [officePreferences, setOfficePreferences] = useState(loadOfficePreferences);
   const [provider, setProvider] = useState<ProviderId>(() => {
     try { const stored = localStorage.getItem('agent-office-provider'); if (stored === 'claude' || stored === 'gemini') return stored; } catch { /* Storage disabled */ }
@@ -51,7 +93,7 @@ export default function App() {
   const mounted = useRef(false);
   const snapshotVersion = useRef(0);
   const pendingState = useRef<AbortController | null>(null);
-  const workspaceTouched = useRef(false);
+  const workspaceTouched = useRef(savedWorkspace !== null);
   const agents = demo ? demoRoster : server?.agents ?? EMPTY_AGENTS;
   // Created-task history survives agent removal; bundled samples belong to the sample crew only.
   const tasks = useMemo(() => demo ? demoData.filter(task => !bundledDemoIds.has(task.id) || agents.some(agent => agent.id === task.agentId)) : server?.tasks ?? [], [demo, demoData, server, agents]);
@@ -75,11 +117,19 @@ export default function App() {
     setProvider(value); setTaskError('');
     try { localStorage.setItem('agent-office-provider', value); } catch { /* Storage disabled */ }
   }
-  function selectAgent(id: AgentId) { setSelected(id); setSelectedTask(null); setTaskError(''); }
-  function editWorkspace(value: string) { workspaceTouched.current = true; setWorkspace(value); setTaskError(''); }
+  function selectAgent(id: AgentId) {
+    setSelected(id); setSelectedTask(null); setTaskError('');
+    savePreference('agent-office-selected-agent', id);
+  }
+  function editWorkspace(value: string) {
+    workspaceTouched.current = true;
+    setWorkspace(value); setTaskError('');
+    savePreference('agent-office-workspace', value);
+  }
   function changeMode(value: boolean) {
     if (PUBLIC_DEMO || starting.current) return;
     setDemo(value); setSelectedTask(null); setModal(false); setTaskError('');
+    savePreference('agent-office-mode', value ? 'demo' : 'live');
     notice(tr(value ? 'Showing demo preview' : 'Showing real AI events'), 'info');
   }
   const acceptState = useCallback((data: unknown) => {
@@ -138,6 +188,10 @@ export default function App() {
     };
   }, [acceptState, reloadState]);
   useEffect(() => { saveDemoRoster(demoRoster); }, [demoRoster]);
+  useEffect(() => {
+    const completed = demoData.filter(task => task.status === 'completed' && !bundledDemoIds.has(task.id));
+    savePreference(DEMO_HISTORY_KEY, JSON.stringify(completed.slice(0, DEMO_HISTORY_LIMIT)));
+  }, [demoData]);
 
   function showNew(agent?: AgentId) {
     if (!agents.length) { setView('team'); notice(tr('Add an agent to create tasks'), 'info'); return; }
@@ -245,6 +299,9 @@ export default function App() {
         <header className="topbar"><div className="crumb"><span><Command size={15}/></span>{' ' + tr('My workspace') + ' '}<b>/</b><strong>{tr(view === 'studio' ? 'Office studio' : view === 'tasks' ? 'Activity & tasks' : view === 'team' ? 'Agent team' : 'Settings')}</strong><ChevronDown size={13}/></div>
           <div className="topbar-actions"><time>{formatTime(now)}</time><i/>{PUBLIC_DEMO ? <span className="api-badge on"><Wifi size={14}/>{tr('Demo environment')}</span> : <span className={cliReady ? 'api-badge on' : 'api-badge'}>{cliReady ? <Wifi size={14}/> : <WifiOff size={14}/>} {tr(cliReady ? 'READY' : online ? 'NOT FOUND' : 'API OFFLINE')}</span>}
             {PUBLIC_DEMO ? <span className="mode-btn demo"><Dot status="amber"/>{tr('DEMO MODE')}</span> : <button className={demo ? 'mode-btn demo' : 'mode-btn live'} aria-pressed={demo} onClick={() => changeMode(!demo)}><Dot status={demo ? 'amber' : online ? 'running' : 'failed'}/>{tr(demo ? 'DEMO MODE' : 'LIVE MODE')} <ChevronDown size={13}/></button>}
+            <button type="button" className="theme-toggle" aria-label={tr('Dark mode')} aria-pressed={darkMode} title={tr('Dark mode')} onClick={toggleTheme}>
+              {darkMode ? <Sun size={16} aria-hidden="true"/> : <Moon size={16} aria-hidden="true"/>}
+            </button>
           </div>
         </header>
         <main id="main-content" className="page-content" tabIndex={-1}>

@@ -13,9 +13,9 @@ export function parseMessage(task, data, addEvent) {
         if (!object(block)) continue
         if (block.type === 'tool_use' && text(block.name)) {
           task.phase = /WebSearch|WebFetch/i.test(block.name) ? 'researching' : 'coding'
-          addEvent(task, `Claude usou ${shrink(block.name)}.`)
+          addEvent(task, `Claude used ${shrink(block.name)}.`)
         } else if (block.type === 'text' && text(block.text)) {
-          message(block.text); addEvent(task, 'Claude respondeu: ' + shrink(block.text, 140))
+          message(block.text); addEvent(task, 'Claude replied: ' + shrink(block.text, 140))
         }
       }
     }
@@ -23,7 +23,7 @@ export function parseMessage(task, data, addEvent) {
       message(data.result)
       if (object(data.usage)) task.usage = data.usage
       if (data.is_error || (text(data.subtype) && data.subtype !== 'success')) {
-        failure(text(data.result) || (Array.isArray(data.errors) ? data.errors.filter(item => text(item)).join('; ') : '') || 'Claude Code relatou erro.')
+        failure(text(data.result) || (Array.isArray(data.errors) ? data.errors.filter(item => text(item)).join('; ') : '') || 'Claude Code reported an error.')
       }
       task.phase = 'finishing'; task.outputComplete = true
     }
@@ -33,45 +33,45 @@ export function parseMessage(task, data, addEvent) {
     if (data.type === 'init' && text(data.session_id)) task.threadId = data.session_id
     if (data.type === 'tool_use' && text(data.tool_name)) {
       task.phase = /search|web/i.test(data.tool_name) ? 'researching' : 'coding'
-      addEvent(task, `Gemini usou ${shrink(data.tool_name)}.`)
+      addEvent(task, `Gemini used ${shrink(data.tool_name)}.`)
     }
     if (data.type === 'message' && data.role === 'assistant' && text(data.content)) {
       // Streaming Gemini messages are chunks, not complete answers.
       task.lastMessage = shrink(data.delta ? (task.lastMessage || '') + data.content : data.content, 500)
-      addEvent(task, 'Gemini respondeu: ' + shrink(data.content, 140))
+      addEvent(task, 'Gemini replied: ' + shrink(data.content, 140))
     }
-    if (data.type === 'error') addEvent(task, shrink(data.message || 'Gemini CLI relatou erro.', 500), 'error')
+    if (data.type === 'error') addEvent(task, shrink(data.message || 'Gemini CLI reported an error.', 500), 'error')
     if (data.type === 'result') {
       message(data.response)
       if (object(data.stats)) task.usage = data.stats
-      if (data.status === 'error' || data.error) failure(text(data.error?.message) || text(data.error) || 'Gemini CLI falhou.')
+      if (data.status === 'error' || data.error) failure(text(data.error?.message) || text(data.error) || 'Gemini CLI failed.')
       task.phase = 'finishing'; task.outputComplete = true
     }
     return
   }
   if (data.type === 'thread.started' && text(data.thread_id)) task.threadId = data.thread_id
-  else if (data.type === 'turn.started') { task.phase = 'thinking'; addEvent(task, 'Codex iniciou a execução.') }
+  else if (data.type === 'turn.started') { task.phase = 'thinking'; addEvent(task, 'Codex started the task.') }
   else if (['item.started', 'item.updated', 'item.completed'].includes(data.type)) {
     const item = object(data.item) ? data.item : {}
-    const verb = data.type === 'item.started' ? 'Iniciando' : data.type === 'item.completed' ? 'Concluiu' : 'Atualizando'
+    const verb = data.type === 'item.started' ? 'Starting' : data.type === 'item.completed' ? 'Finished' : 'Updating'
     if (item.type === 'command_execution') {
       task.phase = 'coding'
-      if (data.type !== 'item.updated') addEvent(task, `${verb} comando: ${shrink(item.command)}`)
+      if (data.type !== 'item.updated') addEvent(task, `${verb} command: ${shrink(item.command)}`)
     } else if (item.type === 'file_change') {
       task.phase = 'coding'
-      if (data.type !== 'item.updated') addEvent(task, `${verb} alteração de arquivos.`)
+      if (data.type !== 'item.updated') addEvent(task, `${verb} file changes.`)
     } else if (item.type === 'agent_message' && data.type === 'item.completed') {
-      message(item.text); addEvent(task, 'Agente respondeu: ' + shrink(item.text, 140))
+      message(item.text); addEvent(task, 'Agent replied: ' + shrink(item.text, 140))
     } else if (item.type === 'web_search' && data.type !== 'item.updated') {
-      task.phase = 'researching'; addEvent(task, `${verb} pesquisa na web.`)
+      task.phase = 'researching'; addEvent(task, `${verb} web search.`)
     } else if (item.type === 'reasoning' && data.type === 'item.started') task.phase = 'thinking'
   } else if (data.type === 'turn.completed') {
     task.usage = object(data.usage) ? data.usage : null
     task.phase = 'finishing'; task.outputComplete = true
   } else if (data.type === 'turn.failed') {
-    failure(text(data.error?.message) || text(data.message) || 'Codex não concluiu a tarefa.')
+    failure(text(data.error?.message) || text(data.message) || 'Codex did not complete the task.')
   } else if (data.type === 'error') {
-    addEvent(task, shrink(data.error?.message || data.message || 'Problema temporário no Codex.', 500), 'error')
+    addEvent(task, shrink(data.error?.message || data.message || 'Codex reported a temporary problem.', 500), 'error')
   }
 }
 

@@ -41,14 +41,14 @@ app.use((req, res, next) => {
   // Protect static content too: an untrusted Host must not load a usable office.
   const host = req.headers.host
   if (typeof host !== 'string' || !/^(localhost|127\.0\.0\.1)(?::\d{1,5})?$/.test(host)) {
-    return res.status(403).json({ error: 'Host não autorizado.' })
+    return res.status(403).json({ error: 'Host is not authorized.' })
   }
   const origin = req.headers.origin
   const allowed = origin && ['127.0.0.1', 'localhost'].some(host =>
     origin === `http://${host}:${PORT}` || origin === `http://${host}:5173`)
-  if (origin && !allowed) return res.status(403).json({ error: 'Origem não autorizada.' })
+  if (origin && !allowed) return res.status(403).json({ error: 'Origin is not authorized.' })
   // Fetch metadata covers browsers which omit Origin; local CLI clients remain supported.
-  if (req.path.startsWith('/api') && req.headers['sec-fetch-site'] === 'cross-site') return res.status(403).json({ error: 'Origem não autorizada.' })
+  if (req.path.startsWith('/api') && req.headers['sec-fetch-site'] === 'cross-site') return res.status(403).json({ error: 'Origin is not authorized.' })
   if (shuttingDown && req.path.startsWith('/api')) return res.status(503).json({ error: 'Office is shutting down.' })
   next()
 })
@@ -236,7 +236,7 @@ app.post('/api/tasks', async (req, res) => {
   const { prompt, agentId, workspace, provider: requestedProvider = 'codex' } = req.body || {}
   const provider = providers.find(item => item.id === requestedProvider)
   if (!provider) return res.status(400).json({ error: 'Motor de IA desconhecido.' })
-  if (!provider.available) return res.status(503).json({ error: `${provider.name} não encontrado. Instale e autentique o CLI, depois reinicie o escritório.` })
+  if (!provider.available) return res.status(503).json({ error: `${provider.name} was not found. Install and authenticate the CLI, then restart Agent Office.` })
   // An in-flight roster write must finish before resolving the selected agent.
   // Otherwise deletion could commit after this task reserves that same profile.
   await agentsPersistChain
@@ -245,13 +245,13 @@ app.post('/api/tasks', async (req, res) => {
   if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > MAX_PROMPT) return res.status(400).json({ error: 'Tarefa vazia ou extensa demais.' })
   if (typeof workspace !== 'string' || workspace.length > 1000 || workspace.includes('\0') || !isAbsolute(workspace)) return res.status(400).json({ error: 'Informe uma pasta de projeto com caminho absoluto.' })
   try {
-    if (!statSync(workspace).isDirectory()) return res.status(400).json({ error: 'A pasta do projeto não é válida.' })
-  } catch { return res.status(400).json({ error: 'Pasta do projeto não encontrada.' }) }
+    if (!statSync(workspace).isDirectory()) return res.status(400).json({ error: 'The project directory is invalid.' })
+  } catch { return res.status(400).json({ error: 'Project directory was not found.' }) }
   let canonical
   try { canonical = realpathSync(workspace) }
-  catch { return res.status(400).json({ error: 'Não foi possível acessar a pasta do projeto.' }) }
-  if ([...active.values()].some(a => a.task.agentId === agentId)) return res.status(409).json({ error: 'Esse agente já está trabalhando.' })
-  if ([...active.values()].some(a => foldersOverlap(canonical, a.canonical))) return res.status(409).json({ error: 'Já existe uma tarefa trabalhando nessa pasta (ou numa pasta dentro dela). Aguarde ou escolha outro projeto para evitar conflitos.' })
+  catch { return res.status(400).json({ error: 'Could not access the project directory.' }) }
+  if ([...active.values()].some(a => a.task.agentId === agentId)) return res.status(409).json({ error: 'Agent is already working.' })
+  if ([...active.values()].some(a => foldersOverlap(canonical, a.canonical))) return res.status(409).json({ error: 'A task is already running in an overlapping directory. Wait for it to finish or choose another project.' })
 
   const task = {
     id: randomUUID(), agentId, agentName: agent.name, provider: provider.id, prompt, workspace, status: 'running', phase: 'thinking',
@@ -261,7 +261,7 @@ app.post('/api/tasks', async (req, res) => {
   // Never evict a running job when trimming history.
   const live = tasks.filter(item => item.status === 'running')
   tasks = [...live, ...tasks.filter(item => item.status !== 'running').slice(0, Math.max(0, MAX_TASKS - live.length))]
-  addEvent(task, `Tarefa enviada ao ${provider.name}.`)
+  addEvent(task, `Task sent to ${provider.name}.`)
 
   // Reserve the agent and canonical folder before awaiting durable storage.
   const running = { child: null, task, canonical, stopping: null }
@@ -323,9 +323,9 @@ app.post('/api/tasks', async (req, res) => {
       : code === 0 && !task.failure && task.outputComplete ? 'completed' : 'failed'
     task.phase = 'idle'; task.finishedAt = stamp()
     if (task.status === 'failed') task.failure ||= shrink(task.events.filter(e => e.kind === 'error').at(-1)?.message || stderr ||
-      (code === 0 ? 'Provider exited without a completion event.' : `${provider.name} saiu com código ${code}.`), 500)
-    addEvent(task, task.status === 'completed' ? 'Tarefa concluída.' : task.status === 'cancelled' ? 'Tarefa cancelada.'
-      : task.status === 'interrupted' ? 'Task interrupted by office shutdown.' : `Falha: ${task.failure}`, task.status === 'completed' ? 'success' : 'error')
+      (code === 0 ? 'Provider exited without a completion event.' : `${provider.name} exited with code ${code}.`), 500)
+    addEvent(task, task.status === 'completed' ? 'Task completed.' : task.status === 'cancelled' ? 'Task cancelled.'
+      : task.status === 'interrupted' ? 'Task interrupted by office shutdown.' : `Failed: ${task.failure}`, task.status === 'completed' ? 'success' : 'error')
     await persistHistory().catch(() => {})
     running.resolveDone()
   }
@@ -342,8 +342,8 @@ app.post('/api/tasks', async (req, res) => {
 
 app.post('/api/tasks/:id/cancel', async (req, res) => {
   const running = active.get(req.params.id)
-  if (!running) return res.status(404).json({ error: 'Tarefa em execução não encontrada.' })
-  if (!running.task.cancelRequested) { running.task.cancelRequested = true; addEvent(running.task, 'Cancelamento solicitado.') }
+  if (!running) return res.status(404).json({ error: 'Running task was not found.' })
+  if (!running.task.cancelRequested) { running.task.cancelRequested = true; addEvent(running.task, 'Cancellation requested.') }
   try {
     running.stopping ||= terminateProcess(running.child)
     await running.stopping

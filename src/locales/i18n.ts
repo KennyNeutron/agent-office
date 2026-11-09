@@ -308,10 +308,6 @@ export function initialLocale(): Locale {
     const stored = resolveLocale(localStorage.getItem(localeStorageKey))
     if (stored) return stored
   } catch { /* Storage can be disabled in private browsing. */ }
-  for (const hint of navigator.languages || [navigator.language]) {
-    const locale = resolveLocale(hint)
-    if (locale) return locale
-  }
   return 'en'
 }
 

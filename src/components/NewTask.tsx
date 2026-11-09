@@ -59,7 +59,7 @@ export function NewTask({ agent, setAgent, workspace, setWorkspace, close, start
         </option>)}
       </select>
       {!import.meta.env.MODE.includes('public-demo') && <><label htmlFor="mission-dir">{tr('PROJECT DIRECTORY')}</label>
-      <input id="mission-dir" maxLength={1000} value={workspace} onChange={event => setWorkspace(event.target.value)} placeholder={tr('Absolute project path')} disabled={demo}/></>}
+      <input id="mission-dir" maxLength={1000} value={workspace} onChange={event => setWorkspace(event.target.value)} placeholder={tr('Absolute project path')}/></>}
       </fieldset>
       {blocked && <p id="task-blocked" className="form-error" role="status">{tr(blocked)}</p>}
       {error && <p id="task-error" className="form-error" role="alert">{error}</p>}

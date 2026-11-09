@@ -48,7 +48,7 @@ async function unitRegressions() {
   await check('locale storage fallback and normalization', () => {
     storage.set('agent-office-language', 'invalid')
     navigator.languages = ['it-IT']
-    assert.equal(language.initialLocale(), 'it')
+    assert.equal(language.initialLocale(), 'en')
     storage.set('agent-office-language', 'PT-br')
     assert.equal(language.initialLocale(), 'pt-BR')
   })

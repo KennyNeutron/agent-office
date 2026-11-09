@@ -132,6 +132,7 @@ select:focus-visible{outline:3px solid #9a96f2;outline-offset:2px}
 .modal fieldset{border:0;margin:0;padding:0;min-width:0}
 .modal input:not([type=color]){width:100%;padding:13px 14px;border:1px solid #e2e6ee;border-radius:9px;background:#fafbfe;color:#27324b;font-size:12px}
 .field-label{display:block;font-size:10px;font-weight:800;letter-spacing:.65px;color:#667286;margin-bottom:9px}
+.modal label[for="mission-dir"] { margin-block-start: 16px; }
 .form-error{color:#9c3045;background:#fff2f3;border:1px solid #efd1d7;padding:10px;border-radius:8px;font-size:12px;line-height:1.5;margin-top:12px;overflow-wrap:anywhere}
 .connection-message{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 15px;margin-bottom:20px;border:1px solid #f0d8b1;background:#fff5e7;color:#73501f;border-radius:9px;font-size:12px;line-height:1.5}
 .connection-message button{flex:none;background:#fff;color:#73501f;border:1px solid #dabf98;border-radius:6px;padding:8px}
@@ -192,3 +193,106 @@ select:focus-visible{outline:3px solid #9a96f2;outline-offset:2px}
 .scene-layout-loading{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;color:#526581;font-size:13px;z-index:2}
 @media(prefers-reduced-motion:reduce){.office-3d-shell canvas,.office-3d-shell .scene-phase-overlay{transition:none}}
 @media(max-width:740px){.topbar-actions{flex-shrink:0}.crumb{flex:1}}
+
+.theme-toggle {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: #f1efff;
+  color: #6658ab;
+}
+.theme-toggle:hover { background: #e7e3ff; }
+
+:root[data-ui-theme="dark"] {
+  color-scheme: dark;
+  --ui-surface: #1a2335;
+  --ui-raised: #232e44;
+  --ui-border: #35425a;
+  --ui-text: #e5ebf7;
+  --ui-muted: #abb8cd;
+  --ui-accent: #c1b8ff;
+  --ui-accent-bg: #332e55;
+  --ui-success: #88dbb3;
+  --ui-success-bg: #19382f;
+  --ui-warning: #f5cb90;
+  --ui-warning-bg: #392e22;
+  --ui-error: #ffadbc;
+  --ui-error-bg: #402733;
+  background: #111827;
+  color: var(--ui-text);
+}
+
+/* The workspace palette is separate from the office scene and its overlays. */
+:where([data-ui-theme="dark"]) {
+  & :is(.topbar,.stat,.crew-card,.ops,.task-tile,.search-box,.task-filters button,.detail-task,.empty-state,.agent-card,.setting-card,.modal,.modal-agent-list button,.execution-inspector,.execution-marker) {
+    background: var(--ui-surface);
+    border-color: var(--ui-border);
+  }
+
+  & :is(code,.topbar-actions>i,.agent-inspector,.last-activity,.execution-stats>div,.execution-log-title small,.pill-status,.department-summary span,.department-pill,.office-sector-colors label) {
+    background: var(--ui-raised);
+    border-color: var(--ui-border);
+  }
+
+  & :is(.modal-dialog,.crumb strong,.stat>strong,.crew-meta strong,.inspector-person strong,.feed-head h3,.feed-empty strong,.task-tile>strong,.task-tile-top>span:first-child,.search-box input,.empty-state h3,.execution-heading h3,.execution-stats strong,.execution-log-title h4) {
+    color: var(--ui-text);
+  }
+
+  & :is(.crumb,.crumb>svg,.crumb b,.topbar-actions time,.intro p,.sub-intro p,.stat>div,.stat>span,.stat strong small,.section-head p,.view-badge,.crew-header p,.crew-header>span,.crew-meta small,.crew-meta>span,.inspector-top small,.inspector-person div span,.agent-inspector>p,.inspector-status,.inspector-status strong,.feed-head,.feed-empty,.task-tile-bottom,.last-activity>div,.last-activity p,.ops-foot,.detail-top>div>span,.detail-top small,.timeline>div,.timeline time,.empty-state,.agent-card>p,.agent-card-foot,.setting-heading p,.setting-card>p,.setting-row span,.setting-card label,.modal label,.field-label,.modal-bottom>span,.execution-prompt,.execution-stats span,.execution-times,.execution-log time,.execution-log-title small,.execution-log p,.execution-empty,.execution-no-events,.execution-usage,.department-summary span,.department-pill,.department-hint,.office-sector-colors label,footer,.pill-status,.task-filters button,.modal-agent-list button) {
+    color: var(--ui-muted);
+  }
+
+  & :is(.inspector-status,.feed-head,.last-activity,.agent-card-foot,.setting-row,.modal-bottom,.execution-log,.timeline,footer) {
+    border-color: var(--ui-border);
+  }
+
+  & :is(.setting-card>input,.modal input:not([type=color]),.modal textarea,.language-picker,.office-options select,.office-options input[type=color]) {
+    background: #141d2e;
+    border-color: var(--ui-border);
+    color: var(--ui-text);
+  }
+
+  & :is(.crumb>span,.theme-toggle,.agent-card-foot button,.detail-top>button,.modal-title>button,.office-reset) {
+    background: var(--ui-accent-bg);
+    color: var(--ui-accent);
+    border-color: var(--ui-border);
+  }
+
+  & :is(.eyebrow,.agent-role,.execution-heading>div,.execution-log-title,.execution-stats svg,.intro h1 b,footer b) {
+    color: var(--ui-accent);
+  }
+
+  & :is(.theme-toggle:hover,.office-reset:hover,.task-tile:hover,.task-tile.selected,.modal-agent-list button.selected) {
+    background: var(--ui-accent-bg);
+    border-color: #857bc5;
+    color: var(--ui-accent);
+  }
+
+  & :is(.crew-card.chosen,.crew-card:hover) { border-color: #857bc5; }
+  & .task-filters button.on { background: #6b60d8; color: white; }
+
+  & :is(.pill-status.running,.pill-status.completed,.stream-badge,.api-badge.on,.mode-btn.live,.setting-ready.yes) {
+    background: var(--ui-success-bg);
+    color: var(--ui-success);
+  }
+
+  & :is(.mode-btn.demo,.roster-warning,.connection-message,.connection-message button) {
+    background: var(--ui-warning-bg);
+    color: var(--ui-warning);
+    border-color: #695034;
+  }
+
+  & :is(.api-badge:not(.on),.pill-status.failed,.pill-status.cancelled,.pill-status.interrupted,.cancel-task,.form-error,.execution-error,.setting-ready:not(.yes)) {
+    background: var(--ui-error-bg);
+    color: var(--ui-error);
+    border-color: #704455;
+  }
+
+  & :is(.failure,.execution-log .event-error p) { color: var(--ui-error); }
+  & .setting-ready.yes { color: var(--ui-success) !important; }
+  & .setting-ready:not(.yes) { color: var(--ui-error) !important; }
+  & .scene-frame { color-scheme: light; }
+}
