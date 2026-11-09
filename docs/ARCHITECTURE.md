@@ -8,7 +8,7 @@ Browser / VS Code Simple Browser (local port)
    ├─ src/views/          Studio, task history, team, settings
    ├─ src/components/     Sidebar, avatars, task cards, task dialog
    ├─ src/scene/          Three.js office / React Three Fiber
-   └─ src/locales/        Translation engine, provider, 20 locale packs
+   └─ src/locales/        English text helpers and date formatting
             │ REST / Server-Sent Events
             ▼
 Local Express API (127.0.0.1:4300, or a CLI-selected port)
@@ -43,7 +43,7 @@ The API is local-only, unauthenticated, and restricted to loopback host/origins.
 
 The Studio execution inspector reuses task data from the same SSE snapshots. Its timeline shows the last 35 server-recorded events per task in newest-first order; phase, elapsed time, error details and token usage are derived from those snapshots. The elapsed clock runs in the browser while a task is active, and stops after the task finishes. Selecting an avatar shows its running task or most recent task; selecting a task tile/history entry inspects that specific execution. Demo events are simulated.
 
-The 3D workstations also use those task snapshots. `src/scene/agentBehavior.ts` maps a running task phase to a character pose, or displays a celebration/error reaction for eight seconds after a completed/failed task. A current running task takes priority over terminal reactions from earlier tasks, so the displayed phase always reflects current work. Status labels are translated in the selected locale; demo mode drives the same animation system from simulated events. These gestures represent **reported task states**, not continuous observation of the agent's keyboard, reasoning or filesystem activity.
+The 3D workstations also use those task snapshots. `src/scene/agentBehavior.ts` maps a running task phase to a character pose, or displays a celebration/error reaction for eight seconds after a completed/failed task. A current running task takes priority over terminal reactions from earlier tasks, so the displayed phase always reflects current work. Status labels are shown in English; demo mode drives the same animation system from simulated events. These gestures represent **reported task states**, not continuous observation of the agent's keyboard, reasoning or filesystem activity.
 
 The browser uses the EventSource API to receive snapshots. The server stores bounded task history in `.local/tasks.json`, which can include the prompts, workspace paths, and short command output excerpts. It is intentionally private and excluded from version control. The browser smoke tests wait for the rendered UI rather than for a fully idle network, since the event stream is designed to stay connected.
 
@@ -57,7 +57,7 @@ The studio loads the 3D renderer on demand. Production builds split the Three.js
 | `src/components/` | Shared UI controls, task cards, avatars, execution inspector and display functions |
 | `src/views/` | Studio, Tasks, Team, Settings screens |
 | `src/scene/` | Lazily loaded interactive 3D office |
-| `src/locales/` | Translations, locale metadata and language provider |
+| `src/locales/` | English text pass-through and date/time formatting provider |
 | `src/types.ts` | Agent and task data models |
 | `src/index.css` | Styling and responsive layout |
 | `server/index.mjs` | Local Express API, durable history, SSE and CLI lifecycle |
@@ -67,7 +67,7 @@ The studio loads the 3D renderer on demand. Production builds split the Three.js
 | `bin/agent-office.mjs` | Globally installed terminal launcher with workspace selection |
 | `vscode-extension/` | VS Code companion that launches CLI and opens a Simple Browser tab |
 | `START-WINDOWS.cmd` | One-click Windows startup and first-run dependency installation |
-| `scripts/` | Dev launcher, translation generator, validation and smoke tests |
+| `scripts/` | Dev launcher, validation and smoke tests |
 | `public/` | Static assets |
 | `docs/` | Documentation and reference screenshot |
 | `.github/workflows/` | GitHub Actions checks |
@@ -78,4 +78,4 @@ The API accepts a local workspace path and starts a tool with code-execution cap
 
 ## Known limitations
 
-3D rendering depends on WebGL/GPU/browser drivers, and the first visit still downloads the 3D engine. Automatic translations can require correction by native speakers. Real execution requires CLI authentication and follows its separate usage/approval policies. The integration launches fresh CLI processes; existing chats in Codex, Claude, Gemini or Codex Web GPT are not tracked. Gemini and Claude compatibility can vary with CLI updates.
+3D rendering depends on WebGL/GPU/browser drivers, and the first visit still downloads the 3D engine. Real execution requires CLI authentication and follows its separate usage/approval policies. The integration launches fresh CLI processes; existing chats in Codex, Claude, Gemini or Codex Web GPT are not tracked. Gemini and Claude compatibility can vary with CLI updates.

@@ -71,7 +71,7 @@ export function launchArgs(id, workspace, permissionMode = 'restricted') {
     return ['-p', '--output-format', 'stream-json', '--approval-mode', fullAccess ? 'yolo' : 'auto_edit',
       ...(fullAccess ? ['--sandbox=false'] : [])]
   }
-  throw new Error('Motor de IA desconhecido.')
+  throw new Error('Unknown AI provider.')
 }
 
 export function foldersOverlap(left, right, platform = process.platform) {

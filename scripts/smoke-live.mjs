@@ -31,7 +31,7 @@ const running = []
 for (const spec of specs) {
   spec.workspace = join(root, spec.agentId)
   await mkdir(spec.workspace, { recursive: true })
-  const prompt = `Crie o arquivo proof.txt nesta pasta de trabalho, contendo exatamente o texto ${spec.expected} e uma quebra de linha final. Nao altere nenhum outro arquivo. Confirme quando terminar.`
+  const prompt = `Create the file proof.txt in this working folder, containing exactly the text ${spec.expected} followed by a final newline. Do not change any other file. Confirm when finished.`
   const response = await post('/api/tasks', { agentId: spec.agentId, prompt, workspace: spec.workspace })
   assert.equal(response.status, 201, `${spec.agentId}: ${JSON.stringify(response.body)}`)
   running.push({ ...spec, id: response.body.task.id })

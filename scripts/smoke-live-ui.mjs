@@ -15,7 +15,7 @@ assert.ok(existsSync(chrome), 'Chrome not found. Set CHROME_BIN to its executabl
 
 const fixture = resolve('.local', `live-ui-smoke-${randomUUID()}`)
 const expected = `AGENT_OFFICE_UI_${randomUUID().replaceAll('-', '')}`
-const prompt = `Crie somente o arquivo proof.txt nesta pasta, contendo exatamente ${expected} e uma quebra de linha final. Nao modifique nenhum outro arquivo.`
+const prompt = `Create only the file proof.txt in this folder, containing exactly ${expected} followed by a final newline. Do not modify any other file.`
 await mkdir(fixture, { recursive: true })
 
 const initial = await (await fetch(`${api}/api/state`)).json()

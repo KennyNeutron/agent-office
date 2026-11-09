@@ -1,6 +1,6 @@
-import { FolderOpen, Languages, Radio, ShieldCheck, Palette } from 'lucide-react';
+import { FolderOpen, Radio, ShieldCheck, Palette } from 'lucide-react';
 import type { ServerState } from '../types';
-import { useLanguage, languages, type Locale } from '../locales/i18n';
+import { useLanguage } from '../locales/i18n';
 import { useOfficePreferences } from '../scene/OfficePreferencesContext';
 import { DEFAULT_OFFICE_PREFERENCES, type OfficeTheme, type OfficeSpacing, type OfficeMotion } from '../scene/officePreferences';
 import { DEPARTMENTS } from '../agents';
@@ -14,7 +14,7 @@ export function Settings({ workspace, setWorkspace, demo, setDemo, server, onlin
   online: boolean;
   publicPreview?: boolean;
 }) {
-  const { locale, setLocale, t: tr } = useLanguage();
+  const { t: tr } = useLanguage();
   const { preferences, updatePreferences } = useOfficePreferences();
   return <>
     <div className="sub-intro">
@@ -45,14 +45,6 @@ export function Settings({ workspace, setWorkspace, demo, setDemo, server, onlin
           </label>)}
         </div>
         <button className="office-reset" type="button" onClick={() => updatePreferences(DEFAULT_OFFICE_PREFERENCES)}>{tr('Restore office defaults')}</button>
-      </section>
-      <section className="setting-card">
-        <div className="setting-heading"><Languages size={22}/><div><h2>{tr('Language')}</h2><p>{tr('Select your preferred interface language.')}</p></div></div>
-        <label htmlFor="interface-language">{tr('INTERFACE LANGUAGE')}</label>
-        <select id="interface-language" className="language-picker" value={locale} onChange={event => setLocale(event.target.value as Locale)}>
-          {languages.map(item => <option key={item.code} value={item.code}>{item.name}</option>)}
-        </select>
-        <p>{tr('Changes take effect immediately and are saved on this device.')}</p>
       </section>
       {!publicPreview && <section className="setting-card">
         <div className="setting-heading"><FolderOpen size={22}/><div><h2>{tr('Project directory')}</h2><p>{tr('Choose where your agents work and which data you want to see.')}</p></div></div>

@@ -75,10 +75,10 @@ test('provider argv keeps flags exact and separates shell metacharacters from co
 test('JSONL preserves fragmented UTF-8 text, CRLF and final records, and recovers after oversized lines', () => {
   const values = [], warnings = []
   const reader = jsonLines(value => values.push(value), () => warnings.push(true), 80)
-  reader.push('{"text":"Olá'); reader.push(' 👩"}\r\nplain diagnostics\n')
+  reader.push('{"text":"Hello'); reader.push(' 👩"}\r\nplain diagnostics\n')
   reader.push('x'.repeat(90)); reader.push('\n{"type":"turn.completed"}')
   reader.end()
-  assert.deepEqual(values, [{ text: 'Olá 👩' }, { type: 'turn.completed' }])
+  assert.deepEqual(values, [{ text: 'Hello 👩' }, { type: 'turn.completed' }])
   assert.equal(warnings.length, 1)
   const bulk = jsonLines(value => values.push(value), undefined, 40)
   bulk.push(Array.from({ length: 30 }, () => '{"ok":true}\n').join(''))

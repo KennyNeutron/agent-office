@@ -35,22 +35,10 @@ async function unitRegressions() {
   const language = load('src/locales/i18n.ts'), agents = load('src/agents.tsx')
   const checks = []
   async function check(name, body) { await body(); checks.push(name) }
-  await check('all 20 language packs and 243 phrases', () => {
-    assert.equal(language.languages.length, 20)
-    assert.equal(language.phrases.length, 243)
-    for (const locale of language.localeCodes) for (const phrase of language.phrases) assert.equal(typeof language.translateText(locale, phrase), 'string')
-    assert.throws(() => language.registerLanguage('pt-BR', 'incomplete'), /Incomplete translation pack/)
-  })
-  await check('prototype names remain user text', () => {
-    for (const phrase of ['constructor', 'toString', '__proto__']) assert.equal(language.translateText('pt-BR', phrase), phrase)
+  await check('interface is English-only', () => {
+    assert.equal(language.locale, 'en')
+    assert.equal(language.languages, undefined)
     assert.equal(agents.displayAgentText({ ...DEFAULT_AGENTS[0], id: 'visitor', role: 'Developer' }, 'role', text => 'translated ' + text), 'Developer')
-  })
-  await check('locale storage fallback and normalization', () => {
-    storage.set('agent-office-language', 'invalid')
-    navigator.languages = ['it-IT']
-    assert.equal(language.initialLocale(), 'en')
-    storage.set('agent-office-language', 'PT-br')
-    assert.equal(language.initialLocale(), 'pt-BR')
   })
   await check('roster corrupt, duplicate, empty and blocked storage', () => {
     const key = 'agent-office-public-demo-roster-v1'
@@ -300,13 +288,10 @@ async function flowRegressions(browser) {
   await page.waitForFunction(() => !document.querySelector('.connection-message'))
 
   await page.click('[aria-label="Settings"]')
-  await page.select('#interface-language', 'ar')
-  await page.waitForFunction(() => document.documentElement.dir === 'rtl')
   for (const width of [320, 390, 768]) {
     await page.setViewport({ width, height: 844 })
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, `RTL settings overflow at ${width}px`)
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, `Settings overflow at ${width}px`)
   }
-  await page.select('#interface-language', 'en')
   for (const label of ['Agent team', 'Activity & tasks', 'Office studio']) {
     await page.click(`[aria-label="${label}"]`)
     await page.setViewport({ width: 320, height: 844 })
@@ -324,7 +309,6 @@ async function flowRegressions(browser) {
     storagePage.on('pageerror', error => storageErrors.push(error.message))
     const storageWrites = await mockAPI(storagePage, baseState)
     await storagePage.evaluateOnNewDocument((kind, defaultAgents) => {
-      localStorage.setItem('agent-office-language', 'not-a-locale')
       localStorage.setItem('agent-office-provider', 'not-a-provider')
       localStorage.setItem('agent-office-public-demo-roster-v1', kind === 'corrupt' ? '{broken' : kind === 'duplicate' ? JSON.stringify([defaultAgents[0], defaultAgents[0]]) : '[]')
       if (kind === 'blocked') {
@@ -449,23 +433,14 @@ try {
   await dialogKeyboard(page, '.team-intro .primary-btn')
   await click('Settings')
   assert.match(await page.$eval('h1', el => el.textContent), /Workspace settings/)
-  const options = await page.$$eval('#interface-language option', list => list.map(el => el.value))
-  assert.equal(options.length, 20, 'Expected all 20 locale choices')
-  for (const locale of options.filter(code => code !== 'en')) {
-    await page.select('#interface-language', locale)
-    await page.waitForFunction(code => document.documentElement.lang === code, {}, locale)
-    const title = await page.$eval('h1', el => el.textContent)
-    assert.notEqual(title, 'Workspace settings', `Settings heading not localized in ${locale}`)
-  }
-  await page.select('#interface-language', 'pt-BR')
-  assert.match(await page.$eval('h1', el => el.textContent), /Configurações do espaço de trabalho/)
+  assert.equal(await page.$('#interface-language'), null, 'Language picker must be removed')
+  assert.equal(await page.$eval('html', el => el.lang), 'en')
   await page.reload({ waitUntil: 'domcontentloaded' })
-  assert.equal(await page.$eval('html', el => el.lang), 'pt-BR', 'Locale should persist across reload')
-  assert.match(await page.$eval('h1', el => el.textContent), /Central de controle/)
+  assert.match(await page.$eval('h1', el => el.textContent), /Mission control/)
   // The 3D scene is lazy-loaded: after reload, the heading appears first.
   await page.waitForSelector('.scene-phase-label[data-agent="nova"]', { timeout: 20000 })
-  assert.match(await page.$eval('.scene-phase-label[data-agent="nova"]', el => el.textContent), /Programando/, '3D phase badge should follow the locale')
-  assert.doesNotMatch(await page.$eval('.task-tile strong', el => el.textContent), /^Build the dashboard/i, 'Bundled demo prompts should be localized')
+  assert.match(await page.$eval('.scene-phase-label[data-agent="nova"]', el => el.textContent), /Coding/, '3D phase badge should show the English phase')
+  assert.match(await page.$eval('.task-tile strong', el => el.textContent), /^Build the dashboard/i, 'Bundled demo prompts stay in English')
   await page.$eval('.intro .primary-btn', el => el.click())
   const providerOptions = await page.$$eval('#task-provider option', items => items.map(item => item.value))
   assert.deepEqual(providerOptions, ['codex', 'claude', 'gemini'], 'Expected three selectable AI providers')
@@ -476,24 +451,23 @@ try {
   await page.$eval('.modal-bottom .primary-btn', el => el.click())
   assert.equal(await page.$eval('.task-tile strong', el => el.textContent), 'Mission control', 'User-entered prompts must not be translated')
   assert.equal(await page.$eval('.execution-prompt', el => el.textContent), 'Codex CLI · Mission control', 'Inspector must focus selected task and show its provider')
-  assert.match(await page.$eval('.execution-inspector h3', el => el.textContent), /Inspetor de execução/)
+  assert.match(await page.$eval('.execution-inspector h3', el => el.textContent), /Execution inspector/)
   await page.waitForFunction(() => document.querySelectorAll('.execution-log li').length >= 2, { timeout: 6000 })
-  assert.match(await page.$eval('.execution-stats', el => el.textContent), /Programando/, 'Demo phase should advance')
+  assert.match(await page.$eval('.execution-stats', el => el.textContent), /Coding/, 'Demo phase should advance')
   await page.waitForFunction(() => document.querySelector('.scene-phase-label[data-agent="nova"]')?.dataset.pose === 'coding', { timeout: 5000 })
   await page.waitForSelector('.execution-heading .pill-status.completed', { timeout: 12000 })
   assert.equal(await page.$eval('.scene-phase-label[data-agent="nova"]', el => el.dataset.pose), 'coding',
     'Ongoing work must stay visible when an earlier preview task completes')
-  await click('Atividades e tarefas')
-  await page.$eval('.detail-task button[aria-label="Mostrar agente"]', el => el.click())
+  await click('Activity & tasks')
+  await page.$eval('.detail-task button[aria-label="Show agent"]', el => el.click())
   assert.equal(await page.$eval('.execution-prompt', el => el.textContent), 'Codex CLI · Mission control', 'History must open the exact task')
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 })
   await page.$eval('.settings-nav', el => el.click())
-  assert.match(await page.$eval('h1', el => el.textContent), /Configurações do espaço de trabalho/)
-  assert.equal(await page.$eval('#interface-language', el => el.value), 'pt-BR')
+  assert.match(await page.$eval('h1', el => el.textContent), /Workspace settings/)
   assert.deepEqual(demoWrites, [], 'Demo actions must make zero API writes')
   await flowRegressions(browser)
   assert.deepEqual(errors, [], 'Browser console errors: ' + errors.join(' | '))
-  console.log(JSON.stringify({ ok: true, screenshot, renderState, demoPoses, phaseTransitionsChecked: true, languagesChecked: options.length, persistedLanguage: 'pt-BR', mobileSettings: true, pagesChecked: ['studio', 'modal', 'tasks', 'team', 'settings'] }, null, 2))
+  console.log(JSON.stringify({ ok: true, screenshot, renderState, demoPoses, phaseTransitionsChecked: true, englishOnly: true, mobileSettings: true, pagesChecked: ['studio', 'modal', 'tasks', 'team', 'settings'] }, null, 2))
   }
 } finally {
   // The live event stream and WebGL renderer can delay Chromium shutdown.

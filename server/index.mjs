@@ -235,16 +235,16 @@ app.post('/api/tasks', async (req, res) => {
   if (!agentsReadable) return res.status(503).json({ error: 'Agent profiles are unreadable. Preserve and repair the data file before launching tasks.' })
   const { prompt, agentId, workspace, provider: requestedProvider = 'codex', permissionMode = 'restricted' } = req.body || {}
   const provider = providers.find(item => item.id === requestedProvider)
-  if (!provider) return res.status(400).json({ error: 'Motor de IA desconhecido.' })
+  if (!provider) return res.status(400).json({ error: 'Unknown AI provider.' })
   if (!supportsPermissionMode(provider.id, permissionMode)) return res.status(400).json({ error: 'This permission mode is unavailable for the selected provider.' })
   if (!provider.available) return res.status(503).json({ error: `${provider.name} was not found. Install and authenticate the CLI, then restart Agent Office.` })
   // An in-flight roster write must finish before resolving the selected agent.
   // Otherwise deletion could commit after this task reserves that same profile.
   await agentsPersistChain
   const agent = agents.find(item => item.id === agentId)
-  if (!agent) return res.status(400).json({ error: 'Agente desconhecido.' })
-  if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > MAX_PROMPT) return res.status(400).json({ error: 'Tarefa vazia ou extensa demais.' })
-  if (typeof workspace !== 'string' || workspace.length > 1000 || workspace.includes('\0') || !isAbsolute(workspace)) return res.status(400).json({ error: 'Informe uma pasta de projeto com caminho absoluto.' })
+  if (!agent) return res.status(400).json({ error: 'Unknown agent.' })
+  if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > MAX_PROMPT) return res.status(400).json({ error: 'Task is empty or too long.' })
+  if (typeof workspace !== 'string' || workspace.length > 1000 || workspace.includes('\0') || !isAbsolute(workspace)) return res.status(400).json({ error: 'Enter an absolute project directory path.' })
   try {
     if (!statSync(workspace).isDirectory()) return res.status(400).json({ error: 'The project directory is invalid.' })
   } catch { return res.status(400).json({ error: 'Project directory was not found.' }) }

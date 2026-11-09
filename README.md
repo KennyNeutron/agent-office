@@ -81,11 +81,9 @@ Profiles are saved locally in `agents.json` next to the private task history, su
 
 **Codex Web GPT / Codex desktop integration:** If you use [Codex Web GPT](https://github.com/miuuyy/codex-chatgpt-web), choose the same repository folder to launch a fresh independent CLI task there. The Agent Office does not connect to its tunnel, Native2 bridge, chat, or existing Codex processes. Avoid modifying the same files concurrently in the two apps; the folder conflict guard cannot detect external applications. Your Codex Web GPT configuration and authentication are never changed by setup.
 
-### 🌐 Interface languages
+### 🌐 Interface language
 
-Open **Settings → Language** and select one of 20 interface languages, including **Português (Brasil)**, Portuguese (Portugal), English, Spanish, French, German, Italian, Dutch, Polish, Russian, Ukrainian, Turkish, Arabic, Hindi, Simplified and Traditional Chinese, Japanese, Korean, Indonesian and Vietnamese. The selection applies immediately and is stored in your browser; a first visit uses your browser language when supported, otherwise English. Language selection is available on mobile as well.
-
-Built-in static translations cover the interface; automatically translated labels may benefit from native-speaker review. Your own task prompts, Codex output, error messages and file paths remain unchanged, while example/demo activity is translated when it matches the built-in sample strings. No online translation API is needed while using the app.
+The interface is in English. Your own task prompts, CLI output, error messages and file paths are shown exactly as written.
 
 To override CLI discovery or set the initial project directory:
 
@@ -99,7 +97,7 @@ npm run server
 
 ## What works
 
-- Rotate and zoom the 3D office; click an avatar to inspect their task. The characters react visually to their reported phases: thinking, coding, researching, finishing, or idle. A completed task triggers a brief celebration; a failed/interrupted task triggers an error reaction. Phase labels follow the interface language.
+- Rotate and zoom the 3D office; click an avatar to inspect their task. The characters react visually to their reported phases: thinking, coding, researching, finishing, or idle. A completed task triggers a brief celebration; a failed/interrupted task triggers an error reaction.
 - Customize themes, seating density, department colors, office accent and avatar movement. Idle avatars can walk along clear aisles between their workstation and their team's shared area. Appearance settings stay on this browser and can be reset at any time.
 - Launch an independent CLI task per avatar, choosing Codex, Claude Code or Gemini per task and targeting an absolute local project directory. Provider detection is performed at API startup; restart after installation.
 - Stream command, file-change, research and progress events to the office through Server-Sent Events (SSE).

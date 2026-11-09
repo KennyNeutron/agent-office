@@ -59,7 +59,7 @@ Upgrade the CLI and VS Code companion together for v0.4. The companion now verif
 | `npm run smoke:floor` | Isolated rendered floor matrix, dynamic size, LOD selection, mobile/desktop; no AI jobs |
 | `npm run smoke:avatars` | Isolated seated/walking/coffee captures; no AI jobs |
 | `npm run smoke:roster` | Isolated live roster CRUD and expansion browser tests; no AI jobs |
-| `npm run smoke:browser` | Browser/WebGL and language regression tests with API + UI running |
+| `npm run smoke:browser` | Browser/WebGL and UI regression tests with API + UI running |
 | `npm run smoke:live` | **Executes real Codex tasks and consumes usage** |
 | `npm run smoke:live-ui` | **Executes a real Codex task and consumes usage**; verifies Live mode from the browser to the final file |
 
@@ -82,5 +82,4 @@ A failed check must be fixed before pushing. Never use `--no-verify` to bypass s
 - **Task fails to start**: check absolute workspace path, write permissions, CLI configuration and the error shown in Activity.
 - **Port occupied**: stop the previous Agent Office API/web instance before starting another.
 - **Tasks missing after restart**: development saves to `.local/tasks.json`; the global CLI stores history in a workspace-specific subfolder of the user state directory (`%LOCALAPPDATA%\\AgentOffice` on Windows). Both stay local and private.
-- **Language changed**: Settings → Language; selection is saved in browser local storage.
 - **Change office appearance**: Settings → Office appearance; themes, spacing, departmental colors, walking and ambient interactions save in browser local storage, separate from the server's private agent roster. "Restore office defaults" resets the appearance only.
