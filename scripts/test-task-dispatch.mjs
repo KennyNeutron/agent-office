@@ -261,7 +261,7 @@ test('unreadable or malformed private stores are preserved and never silently re
   for (const contents of ['[null]', '{broken', '{"not":"an array"}']) {
     const f = await fixture(t, 'success', { 'tasks.json': contents, 'agents.json': '{broken' })
     const state = (await f.request('/api/state')).body
-    assert.deepEqual(state.storage, { historyReadable: false, agentsReadable: false, historyWriteError: false })
+    assert.deepEqual(state.storage, { historyReadable: false, agentsReadable: false, schedulesReadable: true, historyWriteError: false })
     assert.equal((await f.launch()).status, 503)
     const create = await f.request('/api/agents', 'POST', { name:'Safe',role:'QA',specialty:'Audit',department:'quality',color:'#123456' })
     assert.equal(create.status, 500)
@@ -273,6 +273,13 @@ test('unreadable or malformed private stores are preserved and never silently re
   const rosterOnly = await fixture(t, 'success', { 'agents.json': '{broken' })
   assert.equal((await rosterOnly.launch()).status, 503, 'A corrupt roster must not silently launch a default profile')
   await assert.rejects(readFile(rosterOnly.capture), { code: 'ENOENT' })
+  const schedulesOnly = await fixture(t, 'success', { 'schedules.json': '{broken' })
+  assert.equal((await schedulesOnly.request('/api/state')).body.storage.schedulesReadable, false)
+  const schedule = await schedulesOnly.request('/api/schedules', 'POST', { agentId: 'atlas', prompt: 'Check', workspace: schedulesOnly.workspace, provider: 'codex',
+    permissionMode: 'restricted', repeat: 'daily', time: '09:00', runAt: null, intervalMinutes: null, days: null, enabled: true })
+  assert.equal(schedule.status, 500, 'A corrupt schedule store must not be replaced')
+  await schedulesOnly.stop()
+  assert.equal(await readFile(join(schedulesOnly.data, 'schedules.json'), 'utf8'), '{broken')
 })
 
 test('failed durable storage prevents a provider launch; async spawn errors release reservations', async t => {

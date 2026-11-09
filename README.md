@@ -67,7 +67,7 @@ When launched via `agent-office`, real tasks default to your terminal's current 
 
 Open **Agent team → Add agent** to create as many profiles as your setup needs. The original four agents are starting examples, **not a limit**: 0, 1, 10, 20, 50 and larger teams are supported by the roster and office layout. Edit each agent's name, role, mission/specialty, color and department, or remove agents when they are no longer needed. The app suggests a department when your role or mission clearly indicates one; you can override the suggestion. Unrecognized roles use shared workstations rather than being assigned to an unrelated themed area.
 
-The 3D office is a corporate floor with reception, a service wing, meeting space, coffee counters, a shared circulation spine and open work areas. Small teams stay together; larger teams organize by function across nine department types. Departments expand into connected pods of up to nine desks each. Leadership roles declared in the profile guide seating order and desk accents; they are a visual placement hint, not an implemented chain of command. Furniture and character proportions stay stable as the floor expands. Idle agents reserve a kitchenette visit, walk along the aisles, pause with a mug and return; waiting agents stay at their posts. Multiple wings can host visits simultaneously.
+The 3D office is a corporate floor with reception (with a live digital desk clock and a wall calendar showing today's date and weekday, both from your computer's clock), a service wing, meeting space, coffee counters, a shared circulation spine and open work areas. Small teams stay together; larger teams organize by function across nine department types. Departments expand into connected pods of up to nine desks each. Leadership roles declared in the profile guide seating order and desk accents; they are a visual placement hint, not an implemented chain of command. Furniture and character proportions stay stable as the floor expands. Idle agents reserve a kitchenette visit, walk along the aisles, pause with a mug and return; waiting agents stay at their posts. Multiple wings can host visits simultaneously.
 
 The initial overview frames the team. Select a card or character to inspect it; the camera follows that character during a walk. Use the bottom-right overview button to see the full floor again. For rendering efficiency, **teams over 50 show the 50 nearest detailed avatars/workstations, with simplified characters, furniture and bay decoration for the remainder**. Selecting a distant agent promotes it to detailed display. Simplified distant characters show standing/seated work state without detailed idle routines. A roster of 1000 does not mean the machine can run 1000 CLI jobs; hardware, provider limits and the overlapping-project guard still apply.
 
@@ -80,6 +80,18 @@ Physical layout changes use a short floor transition to rebuild furniture and ch
 Profiles are saved locally in `agents.json` next to the private task history, survive restarts, and are scoped to the current Agent Office data directory. You can safely remove the last agent and rebuild your team from zero. Finished task history stays intact when its agent is removed. Demo mode only simulates activity for existing sample agents; it never consumes CLI tokens.
 
 **Codex Web GPT / Codex desktop integration:** If you use [Codex Web GPT](https://github.com/miuuyy/codex-chatgpt-web), choose the same repository folder to launch a fresh independent CLI task there. The Agent Office does not connect to its tunnel, Native2 bridge, chat, or existing Codex processes. Avoid modifying the same files concurrently in the two apps; the folder conflict guard cannot detect external applications. Your Codex Web GPT configuration and authentication are never changed by setup.
+
+### 🗓️ Scheduled tasks
+
+Assign tasks to agents that run automatically: **once** at a set time, **every N minutes/hours/days**, **every day** at a time, or on **selected weekdays**. Open the scheduler from the **schedule board** standing beside reception in the 3D office (click the board or its floating *Schedules* label), from the **Schedules** button next to *New task*, or with **Schedule a task** on the selected agent's card (this pre-filters the list to that agent). Each schedule stores its own prompt, agent, AI provider, permission mode and project directory.
+
+The board's lit rows show the next four upcoming runs in each agent's colour; a green marker means ready, amber means waiting. Agents with active schedules show a calendar icon on their 3D status label. In the list you can pause/resume, **Run now**, edit, delete and jump to the last task a schedule started.
+
+- Schedules run **only while Agent Office is running**. A run missed while it was closed starts once at the next launch; several missed runs collapse into one.
+- If the agent is still busy or another task holds an overlapping folder, the schedule **waits** and starts as soon as it can.
+- Daily and weekly times use the clock of the computer running Agent Office.
+- Live schedules are saved in `schedules.json` next to the task history. Deleting an agent also deletes its schedules. Demo-mode schedules stay in the browser and only simulate runs.
+- Scheduled runs are unattended. Prefer **Restricted** permissions; **Full Access** lets every run change files outside the project without anyone watching.
 
 ### 🌐 Interface language
 
@@ -103,6 +115,7 @@ npm run server
 - Stream command, file-change, research and progress events to the office through Server-Sent Events (SSE).
 - Inspect a selected agent's execution phase, live elapsed time, latest update, chronological event details, errors and token usage (when reported by Codex). Select a task from the feed or history to inspect that exact run.
 - Track finished jobs, latest status and task history; request cancellation.
+- Schedule tasks for any agent (once, interval, daily or weekly) from the 3D schedule board, and pause, edit or run them on demand.
 - Explore the whole interface in Demo mode without spending API tokens or executing commands.
 - Create, edit and delete agent profiles; assign meaningful departments and expand the 3D office with no fixed number of slots.
 

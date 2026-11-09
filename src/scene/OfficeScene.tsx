@@ -3,7 +3,8 @@ import { OrbitControls, OrthographicCamera, RoundedBox } from '@react-three/drei
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import type { Group, Mesh } from 'three'
 import { MathUtils, Vector3 } from 'three'
-import { type AgentId, type OfficeTask } from '../types'
+import { CalendarClock } from 'lucide-react'
+import { type AgentId, type OfficeSchedule, type OfficeTask } from '../types'
 import { DEPARTMENTS, useAgents } from '../agents'
 import { OfficeCampus } from './OfficeCampus'
 import { OfficeAvatar } from './OfficeAvatar'
@@ -15,17 +16,19 @@ import { useOfficePreferences } from './OfficePreferencesContext'
 import type { OfficePreferences } from './officePreferences'
 import { useLanguage } from '../locales/i18n'
 import { phaseName, statusName } from '../components/taskDisplay'
+import { ScheduleBoard } from './ScheduleBoard'
+import { BOARD_LABEL_HEIGHT, scheduleBoardPosition } from './scheduleBoardLayout'
 import { resolveAgentPose, selectAgentTask, TERMINAL_POSE_MS, type AgentPose } from './agentBehavior'
 
 // Project world positions to the existing React DOM layer without creating
 // separate React roots inside Three.js (which can race during unmount).
-function BadgeProjector({ overlayId, seats, sectors, avatars }: { overlayId: string; seats: Seat[]; sectors: OfficeLayout['sectors']; avatars: RefObject<Map<string, Group>> }) {
+function BadgeProjector({ overlayId, seats, sectors, avatars, board }: { overlayId: string; seats: Seat[]; sectors: OfficeLayout['sectors']; avatars: RefObject<Map<string, Group>>; board: [number, number, number] }) {
   const point = useRef(new Vector3())
   const labels = useRef<Map<string, HTMLSpanElement>>(new Map())
   useEffect(() => {
     const overlay = document.getElementById(overlayId)
-    const entries = overlay?.querySelectorAll<HTMLSpanElement>('[data-agent], [data-sector]') || []
-    labels.current = new Map([...entries].map(node => [node.dataset.agent || `sector:${node.dataset.sector}`, node]))
+    const entries = overlay?.querySelectorAll<HTMLSpanElement>('[data-agent], [data-sector], [data-board]') || []
+    labels.current = new Map([...entries].map(node => [node.dataset.agent || (node.dataset.board ? `board:${node.dataset.board}` : `sector:${node.dataset.sector}`), node]))
     return () => { labels.current.clear() }
   }, [overlayId, seats, sectors])
   useFrame(({ camera, size }) => {
@@ -55,6 +58,7 @@ function BadgeProjector({ overlayId, seats, sectors, avatars }: { overlayId: str
       }
     }
     for (const sector of sectors) place(`sector:${sector.key}`, sector.center[0], 3.9, sector.center[2] - sector.depth / 2 + .3)
+    place('board:schedule', board[0], BOARD_LABEL_HEIGHT, board[2])
   })
   return null
 }
@@ -183,9 +187,11 @@ function Workstation({ seat, simulation, selected, pose, active, onSelect, prefe
   </group>
 }
 
-function Studio({ selected, tasks, onSelect, now, overlayId, layout, visibleSeats, distantSeats, overview, preferences }: { selected: AgentId; tasks: OfficeTask[]; onSelect: (value: AgentId) => void; now: number; overlayId: string; layout: OfficeLayout; visibleSeats: Seat[]; distantSeats: Seat[]; overview: boolean; preferences: OfficePreferences }) {
+function Studio({ selected, tasks, schedules, onOpenSchedules, onSelect, now, overlayId, layout, visibleSeats, distantSeats, overview, preferences }: { selected: AgentId; tasks: OfficeTask[]; schedules: OfficeSchedule[]; onOpenSchedules: () => void; onSelect: (value: AgentId) => void; now: number; overlayId: string; layout: OfficeLayout; visibleSeats: Seat[]; distantSeats: Seat[]; overview: boolean; preferences: OfficePreferences }) {
   const { size } = useThree()
   const avatars = useRef(new Map<string, Group>())
+  const agents = useAgents()
+  const board = useMemo(() => scheduleBoardPosition(layout), [layout])
   const [initialSimulation] = useState(() => reconcileOfficeSimulation(layout, new Map(), new Set(tasks.filter(task => task.status === 'running').map(task => task.agentId))))
   const simulation = useRef<OfficeSimulation>(initialSimulation)
   useLayoutEffect(() => {
@@ -220,14 +226,15 @@ function Studio({ selected, tasks, onSelect, now, overlayId, layout, visibleSeat
     <OfficeCampus layout={layout} preferences={preferences} detailedSectorKeys={detailedSectorKeys}/>
     <OfficeCrowdLOD seats={distantSeats} theme={preferences.theme} working={activeIds} simulation={simulation} onSelect={onSelect}/>
     {visibleSeats.map(seat => <Workstation key={seat.agent.id} seat={seat} simulation={simulation} active={activeIds.has(seat.agent.id)} selected={selected === seat.agent.id} pose={resolveAgentPose(selectAgentTask(tasks, seat.agent.id, now), now)} onSelect={() => onSelect(seat.agent.id)} preferences={preferences} avatars={avatars}/>)}
-    <BadgeProjector overlayId={overlayId} seats={visibleSeats} sectors={layout.sectors} avatars={avatars}/>
+    <ScheduleBoard layout={layout} schedules={schedules} agents={agents} accent={preferences.accent} onOpen={onOpenSchedules}/>
+    <BadgeProjector overlayId={overlayId} seats={visibleSeats} sectors={layout.sectors} avatars={avatars} board={board}/>
     <OrthographicCamera key={`${cameraKey}-camera`} makeDefault position={[target[0] + 15, target[1] + 17, target[2] + 19]} zoom={overview ? overviewZoom : 42} near={.1} far={Math.max(250, layout.width + layout.depth + 100)} />
     <OrbitControls key={`${cameraKey}-controls`} makeDefault target={target} minPolarAngle={.25} maxPolarAngle={1.46} enablePan enableDamping dampingFactor={.08} minZoom={overview ? Math.min(2, overviewZoom) : 12} maxZoom={165} />
     <FollowSelected key={`${cameraKey}-${center[0]}-${center[2]}`} selected={selected} overview={overview} avatars={avatars} center={center}/>
   </>
 }
 
-export default function OfficeScene({ selected, tasks, onSelect, overview = false }: { selected: AgentId; tasks: OfficeTask[]; onSelect: (value: AgentId) => void; overview?: boolean }) {
+export default function OfficeScene({ selected, tasks, schedules = [], onOpenSchedules = () => {}, onSelect, overview = false }: { selected: AgentId; tasks: OfficeTask[]; schedules?: OfficeSchedule[]; onOpenSchedules?: (agentId?: AgentId | null) => void; onSelect: (value: AgentId) => void; overview?: boolean }) {
   const { t: tr } = useLanguage()
   const agents = useAgents()
   const { preferences } = useOfficePreferences()
@@ -281,6 +288,8 @@ export default function OfficeScene({ selected, tasks, onSelect, overview = fals
     return layout.seats.filter(seat => !close.has(seat.agent.id))
   }, [layout, visibleSeats])
   const overlayId = useId()
+  const scheduledAgents = useMemo(() => new Set(schedules.filter(item => item.enabled && item.nextRunAt).map(item => item.agentId)), [schedules])
+  const upcomingCount = schedules.filter(item => item.enabled && item.nextRunAt).length
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const timeout = window.setTimeout(() => setNow(Date.now()), 0)
@@ -297,7 +306,7 @@ export default function OfficeScene({ selected, tasks, onSelect, overview = fals
   }, [tasks, now])
   return <div className="office-3d-shell" data-office-theme={preferences.theme} data-office-motion={effectivePreferences.motion} data-layout-transition={presentation.phase} aria-busy={presentation.phase !== 'ready'}>
     <Canvas shadows dpr={[1, 1.5]} gl={{ antialias: true, alpha: false }} onPointerMissed={() => { }}>
-      <Studio key={presentation.key} selected={selected} tasks={tasks} onSelect={onSelect} now={now} overlayId={overlayId} layout={layout} visibleSeats={visibleSeats} distantSeats={distantSeats} overview={overview} preferences={effectivePreferences}/>
+      <Studio key={presentation.key} selected={selected} tasks={tasks} schedules={schedules} onOpenSchedules={() => onOpenSchedules(null)} onSelect={onSelect} now={now} overlayId={overlayId} layout={layout} visibleSeats={visibleSeats} distantSeats={distantSeats} overview={overview} preferences={effectivePreferences}/>
     </Canvas>
     {presentation.phase === 'closing' && <div className="scene-layout-loading" role="status">{tr('Loading 3D office…')}</div>}
     <div id={overlayId} className={`scene-phase-overlay${overview ? ' is-overview' : ''}`} aria-label={tr('Current phase')}>
@@ -306,9 +315,13 @@ export default function OfficeScene({ selected, tasks, onSelect, overview = fals
         const pose = resolveAgentPose(task, now)
         const text = pose === 'celebrating' ? statusName.completed : pose === 'error' ? statusName[task?.status || 'failed'] : phaseName[pose]
         return <span key={agent.id} className={`scene-phase-label phase-${pose}${overview && pose === 'idle' ? ' overview-idle' : ''}`} data-agent={agent.id} data-pose={pose}>
-          <i aria-hidden="true" />{tr(text)}
+          <i aria-hidden="true" />{tr(text)}{scheduledAgents.has(agent.id) && <CalendarClock className="label-schedule" size={10} aria-label="Has scheduled tasks"/>}
         </span>
       })}
+      <button type="button" className="scene-board-label" data-board="schedule" onClick={() => onOpenSchedules(null)}
+        aria-label={`Open scheduled tasks (${upcomingCount} upcoming)`}>
+        <CalendarClock size={12} aria-hidden="true"/>Schedules<b>{upcomingCount}</b>
+      </button>
       {layout.sectors.map(sector => <span key={sector.key} className="scene-sector-label" data-sector={sector.key}>
         <i style={{ background: preferences.sectorColors[sector.id] || DEPARTMENTS.find(dep => dep.id === sector.id)?.color }}/>{overview ? tr(DEPARTMENTS.find(dep => dep.id === sector.id)?.name || sector.id).split(/[ &]+/)[0] : tr(DEPARTMENTS.find(dep => dep.id === sector.id)?.name || sector.id)} · {sector.count}
       </span>)}

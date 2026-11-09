@@ -4,6 +4,7 @@ import { useRef } from 'react'
 import { Vector3, type Group } from 'three'
 import { DEPARTMENTS } from '../agents'
 import { departmentDecor } from './officeDecor'
+import { DeskClock, WallCalendar } from './ReceptionTimepieces'
 import type { Department } from '../types'
 import type { OfficeLayout, Sector } from './officeLayout'
 import type { OfficePreferences } from './officePreferences'
@@ -298,7 +299,7 @@ function CoffeePoint({ x, z }: { x: number; z: number }) {
   </group>
 }
 
-function Reception({ x, z, accent }: { x: number; z: number; accent: string }) {
+function Reception({ x, z, accent, animate }: { x: number; z: number; accent: string; animate: boolean }) {
   return <group position={[x, 0, z]}>
     <mesh position={[0, .003, .4]}><boxGeometry args={[5.5, .006, 3.4]}/><meshStandardMaterial color="#d5dde7" roughness={1}/></mesh>
     <RoundedBox position={[0, .58, 0]} args={[3.3, 1.16, .85]} radius={.09} castShadow><meshStandardMaterial color="#e5e9eb" roughness={.8}/></RoundedBox>
@@ -310,6 +311,8 @@ function Reception({ x, z, accent }: { x: number; z: number; accent: string }) {
     <RoundedBox position={[0, 2.03, -1.13]} args={[4.7, 1.7, .14]} radius={.04}><meshStandardMaterial color="#c6d2dc"/></RoundedBox>
     {[-1, 1].map(side => <RoundedBox key={side} position={[side * 1.34, 1.08, -1.03]} args={[.83, 2.12, .06]} radius={.015}><meshStandardMaterial color="#8193a4" metalness={.5} roughness={.45}/></RoundedBox>)}
     <mesh position={[0, 2.12, -.99]}><boxGeometry args={[.75, .35, .018]}/><meshStandardMaterial color={accent}/></mesh>
+    <DeskClock animate={animate}/>
+    <WallCalendar accent={accent}/>
   </group>
 }
 
@@ -396,7 +399,7 @@ export function OfficeCampus({ layout, preferences, detailedSectorKeys }: { layo
       ? <SharedLounge key={amenity.key} x={amenity.x} z={amenity.z} theme={preferences.theme}/>
       : amenity.id === 'coffee'
         ? <CoffeePoint key={amenity.key} x={amenity.x} z={amenity.z}/>
-        : amenity.id === 'reception' ? <Reception key={amenity.key} x={amenity.x} z={amenity.z} accent={preferences.accent}/>
+        : amenity.id === 'reception' ? <Reception key={amenity.key} x={amenity.x} z={amenity.z} accent={preferences.accent} animate={preferences.motion !== 'off'}/>
         : <FocusNook key={amenity.key} x={amenity.x} z={amenity.z}/>)}
     <SupportWing layout={layout} accent={preferences.accent} dark={preferences.theme === 'midnight'}/>
     <GlassFacade width={layout.width} depth={layout.depth} theme={preferences.theme}/>

@@ -4,7 +4,7 @@ Agent Office runs locally and can execute Codex CLI jobs with access to project 
 
 ## Private information
 
-Live task prompts, workspace directories, generated events and short output excerpts are stored in `.local/tasks.json`. This folder, `.env*`, credentials and keys are excluded from Git. GitHub repositories should contain only source code, public assets and example documentation. Browser language preferences are stored locally.
+Live task prompts, workspace directories, generated events and short output excerpts are stored in `.local/tasks.json`. This folder, `.env*`, credentials and keys are excluded from Git. GitHub repositories should contain only source code, public assets and example documentation. Scheduled tasks (prompt, agent, provider, permission mode and project directory) are stored in `.local/schedules.json`. Scheduled runs are unattended and start while the office is running, so prefer the Restricted permission mode for them.
 
 Do not enter passwords, API keys, private documents or personal information into task descriptions. Do not attach sensitive information to public issues or pull requests. Use trusted workspaces and understand the Codex CLI's filesystem/sandbox permissions.
 

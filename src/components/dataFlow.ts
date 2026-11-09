@@ -1,5 +1,6 @@
 import type { OfficeTask, ServerState } from '../types';
 import { validateDemoAgent } from '../demo/roster';
+import { validStoredSchedules } from '../../server/schedules.mjs';
 
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 const text = (value: unknown): value is string => typeof value === 'string';
@@ -21,7 +22,8 @@ export function isServerState(value: unknown): value is ServerState {
     Array.isArray(value.agents) && value.agents.every(validateDemoAgent) && new Set(value.agents.map(agent => agent.id)).size === value.agents.length &&
     Array.isArray(value.tasks) && value.tasks.every(isOfficeTask) && new Set(value.tasks.map(task => task.id)).size === value.tasks.length &&
     Array.isArray(value.providers) && value.providers.every(provider => object(provider) &&
-      ['codex', 'claude', 'gemini'].includes(String(provider.id)) && text(provider.name) && typeof provider.available === 'boolean');
+      ['codex', 'claude', 'gemini'].includes(String(provider.id)) && text(provider.name) && typeof provider.available === 'boolean') &&
+    (value.schedules == null || validStoredSchedules(value.schedules));
 }
 
 export function isAbsoluteWorkspace(path: string): boolean {

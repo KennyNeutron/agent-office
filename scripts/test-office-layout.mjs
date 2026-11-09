@@ -412,3 +412,50 @@ test('distant actors finish tasks and chair transitions even after focus changes
   for (let i = 0; i < 200; i++) stepOfficeSimulation(simulation, visible, new Set(), .05, 'off')
   assert.equal(simulation.get(hidden).state.stage, 'standing', 'hidden agents must rise after work ends')
 })
+
+test('the schedule board stands clear of every walking route, the reception desk and the meeting lounge', async () => {
+  const { scheduleBoardPosition } = await import('../src/scene/scheduleBoardLayout.ts')
+  const segmentDistance = ([ax, az], [bx, bz], [px, pz]) => {
+    const dx = bx - ax, dz = bz - az, length = dx * dx + dz * dz
+    const t = length ? Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / length)) : 0
+    return Math.hypot(ax + t * dx - px, az + t * dz - pz)
+  }
+  for (const count of [0, 1, 3, 4, 7, 20, 60]) for (const spacing of ['compact', 'regular', 'spacious']) {
+    const layout = makeOfficeLayout(makeTeam(count), spacing)
+    const [x, , z] = scheduleBoardPosition(layout)
+    const reception = layout.amenities.find(item => item.id === 'reception')
+    assert.ok(x > .1 && x < layout.spineX - 2.5, `board inside the service wing (${count}, ${spacing})`)
+    // Board footprint reaches ~.85 m from its centre; the desk front edge sits .48 m ahead of its centre.
+    assert.ok(z - .8 > reception.z + .48, `board clear of the reception desk (${count}, ${spacing})`)
+    for (const lounge of layout.amenities.filter(item => item.id !== 'reception')) {
+      assert.ok(Math.hypot(lounge.x - x, lounge.z - z) > 2.15 + .9, `board clear of ${lounge.key} (${count}, ${spacing})`)
+    }
+    layout.seats.forEach((seat, ordinal) => {
+      const { route } = routeForSeat(layout, seat, ordinal)
+      for (let i = 1; i < route.points.length; i++) {
+        assert.ok(segmentDistance(route.points[i - 1], route.points[i], [x, z]) > 1.2, `route of ${seat.agent.id} passes the board (${count}, ${spacing})`)
+      }
+    })
+  }
+})
+
+test('reception desk clock and wall calendar sit on their furniture without intersecting other props', async () => {
+  const { DESK_CLOCK, WALL_CALENDAR, RECEPTION_PROPS, clockText, calendarText } = await import('../src/scene/timepieceLayout.ts')
+  const overlaps = (a, b) => Math.abs(a.x - b.x) < (a.width + b.width) / 2 - .001 &&
+    Math.abs(a.y - b.y) < (a.height + b.height) / 2 - .001 && Math.abs(a.z - b.z) < (a.depth + b.depth) / 2 - .001
+  // The clock is rotated; use its rotated footprint as an axis-aligned bound.
+  const turn = Math.abs(DESK_CLOCK.rotationY)
+  const clock = { ...DESK_CLOCK, width: DESK_CLOCK.width * Math.cos(turn) + DESK_CLOCK.depth * Math.sin(turn), depth: DESK_CLOCK.width * Math.sin(turn) + DESK_CLOCK.depth * Math.cos(turn) }
+  const top = RECEPTION_PROPS.counterTop
+  assert.ok(Math.abs(clock.y - clock.height / 2 - (top.y + top.height / 2)) < .02, 'clock rests on the counter top')
+  assert.ok(Math.abs(clock.x) + clock.width / 2 <= top.width / 2 && Math.abs(clock.z) + clock.depth / 2 <= top.depth / 2, 'clock stays on the counter')
+  for (const [name, prop] of Object.entries(RECEPTION_PROPS)) {
+    if (name !== 'counterTop') assert.ok(!overlaps(clock, prop), `clock intersects ${name}`)
+    if (name !== 'backWall') assert.ok(!overlaps(WALL_CALENDAR, prop), `calendar intersects ${name}`)
+  }
+  const wall = RECEPTION_PROPS.backWall
+  assert.ok(Math.abs(WALL_CALENDAR.z - WALL_CALENDAR.depth / 2 - (wall.z + wall.depth / 2)) < .002, 'calendar hangs flush on the wall face')
+  assert.ok(WALL_CALENDAR.y + WALL_CALENDAR.height / 2 < wall.y + wall.height / 2 && Math.abs(WALL_CALENDAR.x) + WALL_CALENDAR.width / 2 < wall.width / 2, 'calendar fits on the wall')
+  assert.equal(clockText(new Date(2030, 0, 7, 9, 5)), '09:05')
+  assert.deepEqual(calendarText(new Date(2030, 0, 7)), { month: 'JANUARY', day: '7', weekday: 'Monday' })
+})

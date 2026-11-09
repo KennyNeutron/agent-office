@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { discoverProviders, foldersOverlap, providerCommand, supportsPermissionMode } from './providers.mjs'
 import { DEFAULT_AGENTS, makeAgent, validStoredAgents, validateAgent } from './agents.mjs'
 import { composeAgentPrompt } from './agent-prompt.mjs'
+import { MAX_SCHEDULES, isDue, makeSchedule, recordRun, staleOnceSchedule, validStoredSchedules, validateSchedule } from './schedules.mjs'
 import { jsonLines, parseMessage, shrink } from './task-output.mjs'
 import { terminateProcess } from './processes.mjs'
 
@@ -17,12 +18,20 @@ const ROOT = resolve(HERE, '..')
 // keeps the existing .local/tasks.json location for backwards compatibility.
 const STORE = join(process.env.AGENT_OFFICE_DATA_DIR || join(ROOT, '.local'), 'tasks.json')
 const AGENT_STORE = join(dirname(STORE), 'agents.json')
+const SCHEDULE_STORE = join(dirname(STORE), 'schedules.json')
+// How often due schedules are checked. Tests shorten it.
+const SCHEDULER_MS = Math.max(200, Number(process.env.AGENT_OFFICE_SCHEDULER_MS) || 10_000)
 const PORT = Number(process.env.PORT || 4300)
 const MAX_TASKS = 150
 const MAX_PROMPT = 10000
 const INSTANCE_ID = process.env.AGENT_OFFICE_INSTANCE_ID || randomUUID()
 let agents = DEFAULT_AGENTS.map(agent => ({ ...agent }))
 let agentsPersistChain = Promise.resolve()
+let schedules = []
+let schedulesPersistChain = Promise.resolve()
+let schedulesReadable = true
+let schedulerTimer
+let schedulerRunning = false
 const active = new Map()
 const clients = new Set()
 let tasks = []
@@ -75,7 +84,8 @@ function snapshot() {
     defaultWorkspace: process.env.AGENT_OFFICE_WORKSPACE || ROOT,
     agents,
     tasks: tasks.map(visible),
-    storage: { historyReadable, agentsReadable, historyWriteError },
+    schedules,
+    storage: { historyReadable, agentsReadable, schedulesReadable, historyWriteError },
   }
 }
 
@@ -114,6 +124,31 @@ async function loadAgents() {
     else throw new Error('Invalid agents.json; retained defaults without overwriting the file.')
   } catch (error) {
     if (error.code !== 'ENOENT') { agentsReadable = false; console.error('Could not load agents:', error.message) }
+  }
+}
+
+// Same contract as the roster: serialized, atomic, acknowledged after the write.
+function changeSchedules(edit) {
+  const operation = schedulesPersistChain.then(async () => {
+    if (!schedulesReadable) throw new Error('Existing schedules are unreadable; refusing to overwrite them.')
+    const update = edit(schedules)
+    if (update.error) return update
+    await atomicWrite(SCHEDULE_STORE, JSON.stringify(update.next, null, 2))
+    schedules = update.next
+    notifyState()
+    return update
+  })
+  schedulesPersistChain = operation.then(() => {}, error => console.error('Could not save schedules:', error.message))
+  return operation
+}
+
+async function loadSchedules() {
+  try {
+    const stored = JSON.parse(await readFile(SCHEDULE_STORE, 'utf8'))
+    if (validStoredSchedules(stored)) schedules = stored
+    else throw new Error('Invalid schedules.json; the original file was preserved.')
+  } catch (error) {
+    if (error.code !== 'ENOENT') { schedulesReadable = false; console.error('Could not load schedules:', error.message) }
   }
 }
 
@@ -203,9 +238,97 @@ app.delete('/api/agents/:id', async (req, res) => {
       return { next: current.filter(agent => agent.id !== req.params.id) }
     })
     if (result.error) return res.status(result.status).json({ error: result.error })
+    // Schedules cannot run without their agent; remove them with the profile.
+    if (schedulesReadable && schedules.some(item => item.agentId === req.params.id)) {
+      await changeSchedules(current => ({ next: current.filter(item => item.agentId !== req.params.id) })).catch(() => {})
+    }
     res.json({ ok: true })
   } catch { res.status(500).json({ error: 'Could not save agent profile.' }) }
 })
+
+// Live schedules must name an existing agent and an absolute project folder.
+// Provider availability is checked when the schedule runs.
+function scheduleError(input) {
+  const error = validateSchedule(input)
+  if (error) return error
+  if (!agents.some(agent => agent.id === input.agentId)) return 'Unknown agent.'
+  if (!isAbsolute(input.workspace)) return 'Enter an absolute project directory path.'
+  if (staleOnceSchedule(input)) return 'Choose a time in the future.'
+  return null
+}
+function scheduleRoute(handler) {
+  return async (req, res) => {
+    try {
+      const result = await handler(req)
+      if (result.error) return res.status(result.status || 400).json({ error: result.error })
+      res.status(result.status || 200).json(result.body)
+    } catch { res.status(500).json({ error: 'Could not save schedule.' }) }
+  }
+}
+app.post('/api/schedules', scheduleRoute(async req => {
+  await agentsPersistChain
+  const error = scheduleError(req.body)
+  if (error) return { error }
+  const result = await changeSchedules(current => current.length >= MAX_SCHEDULES
+    ? { status: 409, error: `At most ${MAX_SCHEDULES} schedules are supported.` }
+    : (schedule => ({ next: [...current, schedule], schedule }))(makeSchedule(req.body, randomUUID())))
+  if (result.error) return result
+  wakeScheduler()
+  return { status: 201, body: { schedule: result.schedule } }
+}))
+app.put('/api/schedules/:id', scheduleRoute(async req => {
+  await agentsPersistChain
+  const error = scheduleError(req.body)
+  if (error) return { error }
+  const result = await changeSchedules(current => {
+    const previous = current.find(item => item.id === req.params.id)
+    if (!previous) return { status: 404, error: 'Schedule not found.' }
+    const schedule = makeSchedule(req.body, previous.id, new Date(), previous)
+    return { next: current.map(item => item.id === schedule.id ? schedule : item), schedule }
+  })
+  if (result.error) return result
+  wakeScheduler()
+  return { body: { schedule: result.schedule } }
+}))
+app.delete('/api/schedules/:id', scheduleRoute(async req => {
+  const result = await changeSchedules(current => current.some(item => item.id === req.params.id)
+    ? { next: current.filter(item => item.id !== req.params.id) } : { status: 404, error: 'Schedule not found.' })
+  return result.error ? result : { body: { ok: true } }
+}))
+app.post('/api/schedules/:id/run', scheduleRoute(async req => {
+  await schedulesPersistChain
+  const schedule = schedules.find(item => item.id === req.params.id)
+  if (!schedule) return { status: 404, error: 'Schedule not found.' }
+  const result = await launchTask(schedule, schedule)
+  if (result.status !== 201) return { status: result.status, error: result.body.error }
+  // A manual run counts as the run for one-time schedules; recurring slots are unchanged.
+  await changeSchedules(current => ({ next: current.map(item => item.id !== schedule.id ? item
+    : item.repeat === 'once' ? recordRun(item, { status: 'launched', taskId: result.body.task.id })
+    : { ...item, lastRunAt: stamp(), lastTaskId: result.body.task.id, lastStatus: 'launched', lastMessage: '' }) })).catch(() => {})
+  return { status: 201, body: { task: result.body.task } }
+}))
+
+// Launch every due schedule once. A busy agent or locked folder keeps the
+// schedule waiting, so the run starts as soon as it is free; missed runs
+// (for example while the office was closed) collapse into a single run.
+async function runDueSchedules() {
+  if (schedulerRunning || shuttingDown || !schedulesReadable) return
+  schedulerRunning = true
+  try {
+    await schedulesPersistChain
+    for (const due of schedules.filter(item => isDue(item))) {
+      if (shuttingDown) break
+      const result = await launchTask(due, due)
+      const outcome = result.status === 201 ? { status: 'launched', taskId: result.body.task.id }
+        : { status: result.status === 409 ? 'waiting' : 'failed', message: result.body.error }
+      const current = schedules.find(item => item.id === due.id)
+      // Skip rewriting an unchanged waiting state on every tick.
+      if (!current || (outcome.status === 'waiting' && current.lastStatus === 'waiting' && current.lastMessage === outcome.message)) continue
+      await changeSchedules(list => ({ next: list.map(item => item.id === due.id ? recordRun(item, outcome) : item) })).catch(() => {})
+    }
+  } finally { schedulerRunning = false }
+}
+function wakeScheduler() { setTimeout(() => { void runDueSchedules() }, 0) }
 
 // Roster changes only notify browsers. Task history is written separately.
 function notifyState() {
@@ -230,38 +353,42 @@ app.get('/api/events', (req, res) => {
   res.on('error', cleanup)
 })
 
-app.post('/api/tasks', async (req, res) => {
-  if (!historyReadable) return res.status(503).json({ error: 'Task history is unreadable. Preserve and repair the data file before launching tasks.' })
-  if (!agentsReadable) return res.status(503).json({ error: 'Agent profiles are unreadable. Preserve and repair the data file before launching tasks.' })
-  const { prompt, agentId, workspace, provider: requestedProvider = 'codex', permissionMode = 'restricted' } = req.body || {}
+// Shared by the HTTP route and the scheduler so both apply identical checks.
+const reply = (status, body) => ({ status, body })
+async function launchTask(request, schedule = null) {
+  if (!historyReadable) return reply(503, { error: 'Task history is unreadable. Preserve and repair the data file before launching tasks.' })
+  if (!agentsReadable) return reply(503, { error: 'Agent profiles are unreadable. Preserve and repair the data file before launching tasks.' })
+  const { prompt, agentId, workspace, provider: requestedProvider = 'codex', permissionMode = 'restricted' } = request
   const provider = providers.find(item => item.id === requestedProvider)
-  if (!provider) return res.status(400).json({ error: 'Unknown AI provider.' })
-  if (!supportsPermissionMode(provider.id, permissionMode)) return res.status(400).json({ error: 'This permission mode is unavailable for the selected provider.' })
-  if (!provider.available) return res.status(503).json({ error: `${provider.name} was not found. Install and authenticate the CLI, then restart Agent Office.` })
+  if (!provider) return reply(400, { error: 'Unknown AI provider.' })
+  if (!supportsPermissionMode(provider.id, permissionMode)) return reply(400, { error: 'This permission mode is unavailable for the selected provider.' })
+  if (!provider.available) return reply(503, { error: `${provider.name} was not found. Install and authenticate the CLI, then restart Agent Office.` })
   // An in-flight roster write must finish before resolving the selected agent.
   // Otherwise deletion could commit after this task reserves that same profile.
   await agentsPersistChain
   const agent = agents.find(item => item.id === agentId)
-  if (!agent) return res.status(400).json({ error: 'Unknown agent.' })
-  if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > MAX_PROMPT) return res.status(400).json({ error: 'Task is empty or too long.' })
-  if (typeof workspace !== 'string' || workspace.length > 1000 || workspace.includes('\0') || !isAbsolute(workspace)) return res.status(400).json({ error: 'Enter an absolute project directory path.' })
+  if (!agent) return reply(400, { error: 'Unknown agent.' })
+  if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > MAX_PROMPT) return reply(400, { error: 'Task is empty or too long.' })
+  if (typeof workspace !== 'string' || workspace.length > 1000 || workspace.includes('\0') || !isAbsolute(workspace)) return reply(400, { error: 'Enter an absolute project directory path.' })
   try {
-    if (!statSync(workspace).isDirectory()) return res.status(400).json({ error: 'The project directory is invalid.' })
-  } catch { return res.status(400).json({ error: 'Project directory was not found.' }) }
+    if (!statSync(workspace).isDirectory()) return reply(400, { error: 'The project directory is invalid.' })
+  } catch { return reply(400, { error: 'Project directory was not found.' }) }
   let canonical
   try { canonical = realpathSync(workspace) }
-  catch { return res.status(400).json({ error: 'Could not access the project directory.' }) }
-  if ([...active.values()].some(a => a.task.agentId === agentId)) return res.status(409).json({ error: 'Agent is already working.' })
-  if ([...active.values()].some(a => foldersOverlap(canonical, a.canonical))) return res.status(409).json({ error: 'A task is already running in an overlapping directory. Wait for it to finish or choose another project.' })
+  catch { return reply(400, { error: 'Could not access the project directory.' }) }
+  if ([...active.values()].some(a => a.task.agentId === agentId)) return reply(409, { error: 'Agent is already working.' })
+  if ([...active.values()].some(a => foldersOverlap(canonical, a.canonical))) return reply(409, { error: 'A task is already running in an overlapping directory. Wait for it to finish or choose another project.' })
 
   const task = {
     id: randomUUID(), agentId, agentName: agent.name, provider: provider.id, prompt, workspace, status: 'running', phase: 'thinking',
     createdAt: stamp(), updatedAt: stamp(), finishedAt: null, lastMessage: '', events: [], threadId: null, usage: null,
+    ...(schedule ? { scheduleId: schedule.id } : {}),
   }
   tasks.unshift(task)
   // Never evict a running job when trimming history.
   const live = tasks.filter(item => item.status === 'running')
   tasks = [...live, ...tasks.filter(item => item.status !== 'running').slice(0, Math.max(0, MAX_TASKS - live.length))]
+  if (schedule) addEvent(task, `Started by schedule "${shrink(schedule.title || schedule.prompt, 60)}".`)
   addEvent(task, permissionMode === 'restricted' ? `Task sent to ${provider.name}.`
     : `Task sent to ${provider.name} with ${permissionMode === 'full-access' ? 'Full Access' : 'Approve for me'}.`)
 
@@ -274,7 +401,7 @@ app.post('/api/tasks', async (req, res) => {
     task.status = 'failed'; task.phase = 'idle'; task.finishedAt = stamp()
     task.failure = 'Could not save task history. No provider was launched.'
     addEvent(task, task.failure, 'error')
-    return res.status(500).json({ error: task.failure })
+    return reply(500, { error: task.failure })
   }
   if (shuttingDown || task.cancelRequested) {
     active.delete(task.id)
@@ -282,7 +409,7 @@ app.post('/api/tasks', async (req, res) => {
     task.phase = 'idle'; task.finishedAt = stamp()
     addEvent(task, 'Task stopped before launch.')
     await persistHistory().catch(() => {})
-    return res.status(409).json({ error: 'Task stopped before launch.' })
+    return reply(409, { error: 'Task stopped before launch.' })
   }
 
   const executionPrompt = composeAgentPrompt(agent, task.prompt)
@@ -295,7 +422,7 @@ app.post('/api/tasks', async (req, res) => {
     task.status = 'failed'; task.phase = 'idle'; task.finishedAt = stamp()
     task.failure = shrink(error.message, 500); addEvent(task, task.failure, 'error')
     await persistHistory().catch(() => {})
-    return res.status(500).json({ error: task.failure })
+    return reply(500, { error: task.failure })
   }
   running.child = child
   running.done = new Promise(resolve => { running.resolveDone = resolve })
@@ -339,7 +466,12 @@ app.post('/api/tasks', async (req, res) => {
     if (error.code !== 'EPIPE') { task.failure = shrink(error.message, 400); addEvent(task, task.failure, 'error') }
   })
   child.stdin.end(input)
-  res.status(201).json({ task })
+  return reply(201, { task })
+}
+
+app.post('/api/tasks', async (req, res) => {
+  const result = await launchTask(req.body || {})
+  res.status(result.status).json(result.body)
 })
 
 app.post('/api/tasks/:id/cancel', async (req, res) => {
@@ -358,7 +490,7 @@ app.post('/api/tasks/:id/cancel', async (req, res) => {
   }
 })
 
-await Promise.all([loadHistory(), loadAgents()])
+await Promise.all([loadHistory(), loadAgents(), loadSchedules()])
 if (existsSync(join(ROOT, 'dist', 'index.html'))) {
   app.use(express.static(join(ROOT, 'dist')))
   app.get('/', (_req, res) => res.sendFile(join(ROOT, 'dist', 'index.html')))
@@ -371,6 +503,8 @@ app.use((error, _req, res, _next) => {
 })
 const server = app.listen(PORT, '127.0.0.1', () => {
   console.log(`Agent Office API: http://127.0.0.1:${PORT}`)
+  schedulerTimer = setInterval(() => { void runDueSchedules() }, SCHEDULER_MS)
+  wakeScheduler()
   for (const provider of providers) console.log(`${provider.name}: ${provider.available ? 'detected' : 'not found'}`)
 })
 
@@ -383,6 +517,7 @@ let shutdownPromise
 export function shutdown() {
   return shutdownPromise ||= (async () => {
     shuttingDown = true
+    clearInterval(schedulerTimer)
     clearTimeout(persistTimer); persistTimer = undefined
     const closed = new Promise(resolve => server.close(resolve))
     const forceClose = setTimeout(() => server.closeAllConnections(), 3000)
@@ -398,6 +533,7 @@ export function shutdown() {
     }))
     for (const result of results) if (result.status === 'rejected') { console.error(result.reason.message); process.exitCode = 1 }
     await agentsPersistChain
+    await schedulesPersistChain
     if (historyReadable) await persistHistory().catch(() => { process.exitCode = 1 })
     await closed
     clearTimeout(forceClose)

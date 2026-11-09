@@ -49,6 +49,12 @@ The browser uses the EventSource API to receive snapshots. The server stores bou
 
 The studio loads the 3D renderer on demand. Production builds split the Three.js engine into separately cached JavaScript chunks, reducing the size of the scene's own chunk and avoiding a full re-download of the engine after ordinary interface changes. This does not eliminate the cost of loading Three.js on the first visit.
 
+## Scheduled tasks
+
+`server/schedules.mjs` holds the pure schedule logic (validation, next-run calculation, run recording). The API persists schedules atomically to `schedules.json` beside `agents.json` and exposes `POST /api/schedules`, `PUT /api/schedules/:id`, `DELETE /api/schedules/:id` and `POST /api/schedules/:id/run`; changes stream through the existing SSE snapshot. A timer (every 10 s, `AGENT_OFFICE_SCHEDULER_MS` in tests) launches due schedules through the same `launchTask` function as `POST /api/tasks`, so every provider, workspace, overlap and storage check applies. A `409` (busy agent or overlapping folder) leaves the schedule *waiting* in its current slot; other errors record a failed run and advance it. Missed runs collapse into one. Tasks started by a schedule carry `scheduleId`. Corrupt `schedules.json` is preserved and blocks schedule writes, like the other stores. Deleting an agent removes its schedules.
+
+In Demo mode the same module drives an in-browser scheduler that stores schedules in local storage and simulates runs. In the office, `src/scene/ScheduleBoard.tsx` renders a free-standing board beside reception (`scheduleBoardLayout.ts` places it clear of every walking route, which `test-office-layout.mjs` verifies). Clicking the board or its projected label opens `ScheduleManager`.
+
 ## Directories
 
 | Path | Purpose |
@@ -64,6 +70,7 @@ The studio loads the 3D renderer on demand. Production builds split the Three.js
 | `server/task-output.mjs` | Provider event parsing and bounded output framing |
 | `server/processes.mjs` | Provider descendant process termination |
 | `server/providers.mjs` | CLI adapters, binary discovery and folder overlap checking |
+| `server/schedules.mjs` | Schedule validation and next-run calculation, shared by the API and the browser demo |
 | `bin/agent-office.mjs` | Globally installed terminal launcher with workspace selection |
 | `vscode-extension/` | VS Code companion that launches CLI and opens a Simple Browser tab |
 | `START-WINDOWS.cmd` | One-click Windows startup and first-run dependency installation |

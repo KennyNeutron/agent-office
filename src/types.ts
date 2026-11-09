@@ -33,8 +33,39 @@ export interface OfficeTask {
   failure?: string
   exitCode?: number | null
   usage?: { input_tokens?: number; output_tokens?: number } | null
+  scheduleId?: string | null
 }
-export interface ServerState { connected: boolean; codexAvailable: boolean; providers: ProviderInfo[]; defaultWorkspace: string; tasks: OfficeTask[]; agents: OfficeAgent[] }
+export type ScheduleRepeat = 'once' | 'interval' | 'daily' | 'weekly'
+/** Editable fields of a scheduled task. */
+export interface ScheduleInput {
+  title?: string
+  agentId: AgentId
+  prompt: string
+  workspace: string
+  provider: ProviderId
+  permissionMode: PermissionMode
+  repeat: ScheduleRepeat
+  /** ISO start time for 'once' and 'interval'. */
+  runAt: string | null
+  intervalMinutes: number | null
+  /** Local HH:MM for 'daily' and 'weekly'. */
+  time: string | null
+  /** 0 = Sunday … 6 = Saturday, for 'weekly'. */
+  days: number[] | null
+  enabled: boolean
+}
+export interface OfficeSchedule extends ScheduleInput {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  nextRunAt: string | null
+  lastRunAt: string | null
+  lastTaskId: string | null
+  lastStatus: 'launched' | 'waiting' | 'failed' | null
+  lastMessage: string
+}
+export interface ServerState { connected: boolean; codexAvailable: boolean; providers: ProviderInfo[]; defaultWorkspace: string; tasks: OfficeTask[]; agents: OfficeAgent[]; schedules?: OfficeSchedule[] }
 
 export const DEFAULT_AGENTS: OfficeAgent[] = [
   { id: 'atlas', name: 'Atlas', role: 'Tech Lead', specialty: 'Architecture & planning', color: '#8b82ff', short: 'AT', department: 'architecture' },
