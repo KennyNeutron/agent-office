@@ -17,7 +17,9 @@ import type { OfficePreferences } from './officePreferences'
 import { useLanguage } from '../locales/i18n'
 import { phaseName, statusName } from '../components/taskDisplay'
 import { ScheduleBoard } from './ScheduleBoard'
+import { LoungeTV } from './LoungeTV'
 import { BOARD_LABEL_HEIGHT, scheduleBoardPosition } from './scheduleBoardLayout'
+import type { IdlePose } from './avatarRig'
 import { resolveAgentPose, selectAgentTask, TERMINAL_POSE_MS, type AgentPose } from './agentBehavior'
 
 // Project world positions to the existing React DOM layer without creating
@@ -48,6 +50,7 @@ function BadgeProjector({ overlayId, seats, sectors, avatars, board }: { overlay
           label.dataset.movementStage = String(avatar.userData.movementStage || 'standing')
           label.dataset.walking = String(Boolean(avatar.userData.walking))
           label.dataset.coffeeBreak = String(Boolean(avatar.userData.coffeeBreak))
+          label.dataset.idleActivity = String(avatar.userData.idleActivity || '')
         }
         avatar.getWorldPosition(point.current)
         if (label) {
@@ -161,6 +164,7 @@ function Workstation({ seat, simulation, selected, pose, active, onSelect, prefe
   const gaitRef = useRef(0)
   const seatedRef = useRef(0)
   const coffeeRef = useRef(false)
+  const idleRef = useRef<IdlePose | null>(null)
   useFrame((_, delta) => {
     if (!traveler.current) return
     const actor = simulation.current.get(agent.id)
@@ -178,11 +182,14 @@ function Workstation({ seat, simulation, selected, pose, active, onSelect, prefe
     walkRef.current = frame.walking ? 1 : 0
     seatedRef.current = frame.seated
     coffeeRef.current = frame.stage === 'coffee'
+    idleRef.current = frame.stage === 'browsing' ? 'browse' : frame.stage === 'lounging' ? 'lap' : frame.stage === 'viewing' ? 'look'
+      : frame.stage === 'idling' && (frame.activity === 'stretch' || frame.activity === 'phone') ? frame.activity : null
+    traveler.current.userData.idleActivity = frame.activity ?? ''
   }, -.75)
   return <group position={position}>
     <Desk color={seat.placement === 'lead' ? '#ba9759' : agent.color} active={active} theme={preferences.theme} />
     <group ref={node => { traveler.current = node; if (node) avatars.current.set(agent.id, node); else avatars.current.delete(agent.id) }} position={[0, 0, STAND_Z]} rotation={[0, Math.PI, 0]}>
-      <OfficeAvatar agent={agent} pose={pose} selected={selected} onSelect={onSelect} walkRef={walkRef} gaitRef={gaitRef} seatedRef={seatedRef} coffeeRef={coffeeRef} animate={preferences.motion !== 'off'}/>
+      <OfficeAvatar agent={agent} pose={pose} selected={selected} onSelect={onSelect} walkRef={walkRef} gaitRef={gaitRef} seatedRef={seatedRef} coffeeRef={coffeeRef} idleRef={idleRef} animate={preferences.motion !== 'off'}/>
     </group>
   </group>
 }
@@ -226,6 +233,7 @@ function Studio({ selected, tasks, schedules, onOpenSchedules, onSelect, now, ov
     <OfficeCampus layout={layout} preferences={preferences} detailedSectorKeys={detailedSectorKeys}/>
     <OfficeCrowdLOD seats={distantSeats} theme={preferences.theme} working={activeIds} simulation={simulation} onSelect={onSelect}/>
     {visibleSeats.map(seat => <Workstation key={seat.agent.id} seat={seat} simulation={simulation} active={activeIds.has(seat.agent.id)} selected={selected === seat.agent.id} pose={resolveAgentPose(selectAgentTask(tasks, seat.agent.id, now), now)} onSelect={() => onSelect(seat.agent.id)} preferences={preferences} avatars={avatars}/>)}
+    <LoungeTV layout={layout} simulation={simulation}/>
     <ScheduleBoard layout={layout} schedules={schedules} agents={agents} accent={preferences.accent} onOpen={onOpenSchedules}/>
     <BadgeProjector overlayId={overlayId} seats={visibleSeats} sectors={layout.sectors} avatars={avatars} board={board}/>
     <OrthographicCamera key={`${cameraKey}-camera`} makeDefault position={[target[0] + 15, target[1] + 17, target[2] + 19]} zoom={overview ? overviewZoom : 42} near={.1} far={Math.max(250, layout.width + layout.depth + 100)} />

@@ -1,8 +1,19 @@
 import type { Seat, Sector } from './officeLayout'
 import type { OfficeMotion } from './officePreferences'
+import type { VisitSpot } from './loungeLayout'
 
 export type Point = [number, number]
-export type Route = { points: Point[]; durations: number[]; total: number; breakIndex: number; breakStage: 'coffee' | 'resting' }
+/** Idle activities that leave the desk. */
+export type Excursion = 'coffee' | 'schedule' | 'tv'
+/** Everything an idle agent can do. Ambient presentation only: none of it reflects task progress. */
+export type IdleActivity = 'desk' | 'stretch' | 'phone' | Excursion
+export type VisitStage = 'coffee' | 'resting' | 'viewing' | 'lounging'
+export type Route = {
+  points: Point[]; durations: number[]; total: number; breakIndex: number; breakStage: VisitStage
+  activity: Excursion; spot: string; facing: number; seat?: Point
+}
+/** Home stand point and every excursion route available to one agent. */
+export type ActorPlan = { home: Point; excursions: Route[] }
 export type CoffeeStop = { x: number; z: number; aisleZ: number; spineX?: number; key?: string }
 export const CHAIR_Z = .94
 export const STAND_Z = 1.18
@@ -11,6 +22,12 @@ export const AISLE_Z = 2.32
 export const DESK_FACING = Math.PI
 // Walking to the front of the chair and sitting are separate phases.
 export const CHAIR_APPROACH_Z = .56
+const SIT_SECONDS = .72
+
+function timed(points: Point[], breakIndex: number, breakStage: VisitStage, activity: Excursion, spot: string, facing: number, seat?: Point): Route {
+  const durations = points.slice(1).map((point, index) => Math.hypot(point[0] - points[index][0], point[1] - points[index][1]) / 1.3)
+  return { points, durations, total: durations.reduce((sum, seconds) => sum + seconds, 0) + 12, breakIndex, breakStage, activity, spot, facing, ...(seat ? { seat } : {}) }
+}
 
 // Paths use desk-side aisles and the shared corridor. A coffee visit goes
 // around the outside of each bay, then enters the kitchenette from its aisle.
@@ -32,10 +49,19 @@ export function makeWalkRoute(seat: Seat, sector: Sector, slot: number, coffee?:
     [x + STAND_SIDE_X, z + STAND_Z], [x + STAND_SIDE_X, z + AISLE_Z], [sideAisle, z + AISLE_Z], [sideAisle, front],
     [loungeX, front], [sideAisle, front], [sideAisle, z + AISLE_Z], [x + STAND_SIDE_X, z + AISLE_Z], [x + STAND_SIDE_X, z + STAND_Z],
   ]
-  const breakIndex = coffee ? 6 : 4
-  const durations = points.slice(1).map((point, index) => Math.hypot(point[0] - points[index][0], point[1] - points[index][1]) / 1.3)
-  return { points, durations, total: durations.reduce((sum, seconds) => sum + seconds, 0) + 12,
-    breakIndex, breakStage: coffee ? 'coffee' : 'resting' }
+  return timed(points, coffee ? 6 : 4, coffee ? 'coffee' : 'resting', 'coffee', coffee?.key ?? sector.key, DESK_FACING)
+}
+
+/**
+ * A round trip to a service-wing spot (TV sofa or schedule board): out through the
+ * bay aisle and the shared corridor, along the spot's lane, then back the same way.
+ */
+export function makeVisitRoute(seat: Seat, sector: Sector, front: number, spineX: number, spot: VisitSpot, activity: Exclude<Excursion, 'coffee'>): Route {
+  const [x, , z] = seat.position
+  const sideAisle = sector.center[0] - sector.width / 2 + .55
+  const outbound: Point[] = [[x + STAND_SIDE_X, z + STAND_Z], [x + STAND_SIDE_X, z + AISLE_Z], [sideAisle, z + AISLE_Z], [sideAisle, front], [spineX, front], ...spot.lane]
+  const points = [...outbound, ...outbound.slice(0, -1).reverse()]
+  return timed(points, outbound.length - 1, activity === 'tv' ? 'lounging' : 'viewing', activity, spot.key, spot.facing, activity === 'tv' ? spot.point : undefined)
 }
 
 export function walkAt(route: Route, seconds: number, motion: OfficeMotion): { position: Point; walking: boolean; resting: boolean; facing: number } {
@@ -67,61 +93,123 @@ export function walkAt(route: Route, seconds: number, motion: OfficeMotion): { p
   return { position: home, walking: false, resting: false, facing: Math.PI }
 }
 
-export type MovementStage = 'standing' | 'walking' | 'resting' | 'coffee' | 'returning' | 'approaching' | 'sitting' | 'working' | 'rising' | 'leaving'
+export type MovementStage = 'standing' | 'idling' | 'walking' | VisitStage | 'returning' | 'approaching' | 'sitting' | 'working' | 'browsing' | 'rising' | 'leaving'
 export type MovementState = {
   stage: MovementStage; position: Point; facing: number; seated: number; walking: boolean
   cursor: number; waypoints: Point[]; wait: number; idleTime: number
+  /** Current idle activity, or null while working or deciding. */
+  activity: IdleActivity | null
+  /** Index into the plan's excursions while away from the desk, otherwise -1. */
+  excursion: number
+  /** Seconds the current activity lasts. */
+  duration: number
+  /** Counts decisions, seeding the next pseudo-random choice. */
+  plan: number
 }
 
-export function createMovementState(route: Route): MovementState {
-  return { stage: 'standing', position: [...route.points[0]], facing: DESK_FACING, seated: 0,
-    walking: false, cursor: 0, waypoints: [], wait: 0, idleTime: 0 }
+export function createMovementState(plan: ActorPlan | Route): MovementState {
+  const home = 'home' in plan ? plan.home : plan.points[0]
+  return { stage: 'standing', position: [...home], facing: DESK_FACING, seated: 0,
+    walking: false, cursor: 0, waypoints: [], wait: 0, idleTime: 0, activity: null, excursion: -1, duration: 0, plan: 0 }
+}
+
+/** Deterministic 0..1 noise, so a scene replays the same choices and tests stay stable. */
+export function idleRandom(ordinal: number, plan: number, salt = 0): number {
+  let h = Math.imul(ordinal + 1, 0x27d4eb2d) ^ Math.imul(plan + 7, 0x165667b1) ^ Math.imul(salt + 3, 0x9e3779b1)
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b)
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35)
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296
+}
+
+const WEIGHTS: [IdleActivity, number][] = [['desk', 34], ['stretch', 9], ['phone', 12], ['coffee', 15], ['schedule', 12], ['tv', 18]]
+const DURATION: Record<IdleActivity, [number, number]> = {
+  desk: [14, 30], stretch: [4.5, 6.5], phone: [7, 13], coffee: [5, 7], schedule: [5, 8], tv: [14, 26],
+}
+const pick = (ordinal: number, plan: number, salt: number, [low, high]: [number, number]) => low + idleRandom(ordinal, plan, salt) * (high - low)
+
+/** Access to shared spots and corridors, decided by the floor simulation. */
+export type MovementAccess = { depart?: (route: Route) => boolean; corridor?: boolean }
+
+/** Picks the next idle activity. Excursions only start when their spot and the corridor are free. */
+export function chooseIdleActivity(state: MovementState, plan: ActorPlan, ordinal: number, depart: (route: Route) => boolean): { activity: IdleActivity; excursion: number } {
+  const total = WEIGHTS.reduce((sum, [, weight]) => sum + weight, 0)
+  let roll = idleRandom(ordinal, state.plan, 1) * total
+  let activity: IdleActivity = 'desk'
+  for (const [name, weight] of WEIGHTS) { if ((roll -= weight) < 0) { activity = name; break } }
+  // Variety: avoid repeating the same away-from-desk activity twice in a row.
+  if (activity !== 'desk' && activity === state.activity) activity = 'desk'
+  if (activity === 'coffee' || activity === 'schedule' || activity === 'tv') {
+    const options = plan.excursions.map((route, index) => ({ route, index })).filter(({ route }) => route.activity === activity && depart(route))
+    if (!options.length) return { activity: 'desk', excursion: -1 }
+    return { activity, excursion: options[Math.floor(idleRandom(ordinal, state.plan, 2) * options.length)].index }
+  }
+  return { activity, excursion: -1 }
 }
 
 // A task event changes the movement goal, not the avatar's coordinates.
 // While returning, the agent retraces the aisle network instead of cutting
 // diagonally through chairs or desks. All pose transitions advance by delta.
-export function advanceMovement(state: MovementState, route: Route, dt: number, active: boolean,
-  motion: OfficeMotion, ordinal: number, canDepart = true): MovementState {
+export function advanceMovement(state: MovementState, plan: ActorPlan, dt: number, active: boolean,
+  motion: OfficeMotion, ordinal: number, access: MovementAccess = {}): MovementState {
   const next: MovementState = { ...state, position: [...state.position], waypoints: [...state.waypoints] }
   const step = Math.min(Math.max(0, dt), .05)
-  const home = route.points[0]
+  const home = plan.home
   const chair: Point = [home[0] - STAND_SIDE_X, home[1] + CHAIR_Z - STAND_Z]
   const front: Point = [chair[0], home[1] + CHAIR_APPROACH_Z - STAND_Z]
   const side: Point = [home[0], front[1]]
+  const corridor = access.corridor ?? true
+  const route = next.excursion >= 0 ? plan.excursions[next.excursion] : undefined
+  const still = motion === 'off'
   next.walking = false
-  if ((active || motion === 'off') && (next.stage === 'walking' || next.stage === 'resting' || next.stage === 'coffee')) {
+
+  // ---- Goal changes: real tasks always outrank idle routines. ----
+  if ((active || still) && route && (next.stage === 'walking' || next.stage === 'resting' || next.stage === 'coffee' || next.stage === 'viewing')) {
     const outbound = next.stage === route.breakStage || next.cursor <= route.breakIndex
     next.waypoints = outbound ? route.points.slice(0, next.cursor).reverse() : route.points.slice(next.cursor)
     next.cursor = 0
     next.stage = 'returning'
   }
-  if (active && next.stage === 'rising') next.stage = 'sitting'
-  if (active && next.stage === 'leaving') {
-    next.stage = 'approaching'
-    next.waypoints = [side, front]
-    next.cursor = 0
+  if ((active || still) && next.stage === 'lounging') next.duration = 0
+  if ((active || still) && next.stage === 'idling') { next.stage = 'standing'; next.activity = null }
+  if (active) {
+    if (next.stage === 'browsing') { next.stage = 'working'; next.activity = null }
+    if (next.stage === 'rising') next.stage = 'sitting'
+    if (next.stage === 'leaving' || next.stage === 'standing') {
+      next.stage = 'approaching'
+      next.waypoints = [side, front]
+      next.cursor = 0
+      next.wait = 0
+    }
+    if (next.stage === 'approaching' || next.stage === 'sitting') next.activity = null
+  } else {
+    const deskIdle = next.activity === 'desk' && !still
+    if (next.stage === 'approaching' && !deskIdle) {
+      next.stage = 'leaving'
+      next.waypoints = [side, home]
+      next.cursor = 0
+    }
+    if (next.stage === 'working' || (next.stage === 'sitting' && !deskIdle)) {
+      if (still) { next.stage = 'rising'; next.wait = 0 }
+      // After a task the agent stays at the computer for a while before getting up.
+      else if (next.stage === 'working') {
+        next.stage = 'browsing'; next.activity = 'desk'; next.wait = 0
+        next.duration = pick(ordinal, next.plan++, 3, [6, 14])
+      } else next.activity = 'desk'
+    }
+    if (next.stage === 'browsing' && still) { next.stage = 'rising'; next.wait = 0 }
   }
-  if (active && next.stage === 'standing') {
-    next.stage = 'approaching'
-    next.waypoints = [side, front]
-    next.cursor = 0
-    next.wait = 0
-  }
-  if (!active && next.stage === 'approaching') {
-    next.stage = 'leaving'
-    next.waypoints = [side, home]
-    next.cursor = 0
-  }
-  if (!active && (next.stage === 'working' || next.stage === 'sitting')) { next.stage = 'rising'; next.wait = 0 }
 
+  // ---- Desk chair: sitting down, working or browsing, rising. ----
   if (next.stage === 'sitting' || next.stage === 'rising') {
     const direction = next.stage === 'sitting' ? 1 : -1
-    next.seated = Math.min(1, Math.max(0, next.seated + direction * step / .72))
+    next.seated = Math.min(1, Math.max(0, next.seated + direction * step / SIT_SECONDS))
     const ease = next.seated * next.seated * (3 - 2 * next.seated)
     next.position = [chair[0], front[1] + (chair[1] - front[1]) * ease]
     next.facing = DESK_FACING
-    if (next.seated === 1) next.stage = 'working'
+    if (next.seated === 1) {
+      next.stage = active ? 'working' : 'browsing'
+      next.wait = 0
+    }
     if (next.seated === 0) {
       next.stage = 'leaving'
       next.waypoints = [side, home]
@@ -130,31 +218,76 @@ export function advanceMovement(state: MovementState, route: Route, dt: number, 
     }
     return next
   }
-  if (next.stage === 'working') {
+  if (next.stage === 'working' || next.stage === 'browsing') {
     next.position = [...chair]
     next.seated = 1
     next.facing = DESK_FACING
+    if (next.stage === 'browsing') {
+      next.wait += step * (motion === 'subtle' ? .45 : 1)
+      if (next.wait >= next.duration) { next.stage = 'rising'; next.activity = null; next.wait = 0 }
+    }
     return next
   }
+
+  // ---- At the desk side: deciding, stretching, checking a phone. ----
   if (next.stage === 'standing') {
     next.position = [...home]
     next.facing = DESK_FACING
-    if (!active && motion !== 'off') {
+    if (!active && !still) {
       next.idleTime += step * (motion === 'subtle' ? .45 : 1)
-      // Spread visits over time so a large team does not crowd the compact counter.
-      if (canDepart && next.idleTime > 12 + (ordinal * 7 % 31)) {
-        next.stage = 'walking'
-        next.cursor = 1
+      // A short, staggered pause so a team does not move in lockstep.
+      if (next.idleTime > 1.2 + (ordinal * 7 % 9) * .35) {
+        const choice = chooseIdleActivity(next, plan, ordinal, access.depart ?? (() => true))
+        next.idleTime = 0
+        next.activity = choice.activity
+        next.duration = pick(ordinal, next.plan, 4, DURATION[choice.activity])
+        next.plan++
+        next.wait = 0
+        if (choice.activity === 'desk') {
+          next.stage = 'approaching'
+          next.waypoints = [side, front]
+          next.cursor = 0
+        } else if (choice.excursion >= 0) {
+          next.stage = 'walking'
+          next.excursion = choice.excursion
+          next.cursor = 1
+        } else next.stage = 'idling'
       }
     }
     return next
   }
-  if (next.stage === 'resting' || next.stage === 'coffee') {
+  if (next.stage === 'idling') {
+    next.position = [...home]
+    next.facing = DESK_FACING
+    next.wait += step * (motion === 'subtle' ? .45 : 1)
+    if (next.wait >= next.duration) { next.stage = 'standing'; next.idleTime = 0; next.wait = 0 }
+    return next
+  }
+
+  // ---- At a service-wing spot. ----
+  if (route && (next.stage === 'resting' || next.stage === 'coffee' || next.stage === 'viewing')) {
     next.wait += step
-    if (next.wait < (next.stage === 'coffee' ? 5 : 3.5)) return next
+    next.facing = route.facing
+    // Wait for the corridor to clear before heading back.
+    if (next.wait < next.duration || !corridor) return next
     next.stage = 'walking'
     next.cursor = route.breakIndex + 1
   }
+  if (route && next.stage === 'lounging') {
+    const approach = route.points[route.breakIndex], seat = route.seat ?? approach
+    next.facing = route.facing
+    const staying = next.wait < next.duration || (!corridor && !active && !still)
+    if (staying) next.wait += step
+    next.seated = Math.min(1, Math.max(0, next.seated + (staying ? 1 : -1) * step / SIT_SECONDS))
+    const ease = next.seated * next.seated * (3 - 2 * next.seated)
+    next.position = [approach[0] + (seat[0] - approach[0]) * ease, approach[1] + (seat[1] - approach[1]) * ease]
+    if (!staying && next.seated === 0) {
+      next.stage = 'walking'
+      next.cursor = route.breakIndex + 1
+    }
+    return next
+  }
+
   if (next.stage === 'approaching' || next.stage === 'leaving') {
     const target = next.waypoints[next.cursor]
     if (!target) {
@@ -184,15 +317,21 @@ export function advanceMovement(state: MovementState, route: Route, dt: number, 
     }
     return next
   }
-  const returning = next.stage === 'returning'
-  const points = returning ? next.waypoints : route.points
-  if (returning && points.length === 0) {
+
+  // ---- Walking an excursion route, or returning along walkways. ----
+  const finish = () => {
     next.stage = 'standing'
+    next.cursor = 0
     next.position = [...home]
-    return next
+    next.idleTime = 0
+    next.excursion = -1
+    next.waypoints = []
   }
+  const returning = next.stage === 'returning'
+  const points = returning ? next.waypoints : route?.points ?? []
+  if (returning && points.length === 0) { finish(); return next }
   const target = points[next.cursor]
-  if (!target) { next.stage = 'standing'; next.position = [...home]; next.idleTime = 0; return next }
+  if (!target || !route && !returning) { finish(); return next }
   const dx = target[0] - next.position[0], dz = target[1] - next.position[1]
   const distance = Math.hypot(dx, dz)
   if (distance > .0001) {
@@ -204,18 +343,14 @@ export function advanceMovement(state: MovementState, route: Route, dt: number, 
   if (distance <= 1.35 * step + .0001) {
     next.position = [...target]
     next.cursor++
-    if (!returning && next.cursor === route.breakIndex + 1) {
+    if (!returning && route && next.cursor === route.breakIndex + 1) {
       next.stage = route.breakStage
       next.wait = 0
       next.walking = false
-      if (route.breakStage === 'coffee') next.facing = DESK_FACING
+      next.facing = route.facing
+      if (next.duration <= 0) next.duration = pick(ordinal, next.plan, 5, DURATION[route.activity])
     }
-    else if (next.cursor >= points.length) {
-      next.stage = 'standing'
-      next.cursor = 0
-      next.position = [...home]
-      next.idleTime = 0
-    }
+    else if (next.cursor >= points.length) finish()
   }
   return next
 }

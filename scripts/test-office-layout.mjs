@@ -6,7 +6,8 @@ import { advanceMovement, CHAIR_Z, CHAIR_APPROACH_Z, createMovementState, STAND_
 import { makeAvatarRigPose } from '../src/scene/avatarRig.ts'
 import { departmentDecor } from '../src/scene/officeDecor.ts'
 import { DEFAULT_OFFICE_PREFERENCES, normalizeOfficePreferences } from '../src/scene/officePreferences.ts'
-import { layoutGeometryKey, routeForSeat, reconcileOfficeSimulation, stepOfficeSimulation } from '../src/scene/officeSimulation.ts'
+import { heldSpot, layoutGeometryKey, planForSeat, routeForSeat, reconcileOfficeSimulation, stepOfficeSimulation, tvWatched } from '../src/scene/officeSimulation.ts'
+import { boardSpots, COFFEE_TABLE, SOFA, tvSeats } from '../src/scene/loungeLayout.ts'
 
 const departments = ['architecture', 'engineering', 'design', 'quality', 'research', 'operations', 'security', 'data', 'general']
 
@@ -215,14 +216,15 @@ test('corporate floor grows through bounded team pods with a real service wing',
 test('work transitions return along walkways, sit at the monitor and rise coherently', () => {
   const layout = makeOfficeLayout(makeTeam(4))
   const seat = layout.seats[0]
-  const route = routeFor(layout, seat, 0)
-  let state = createMovementState(route)
-  for (let i = 0; i < 1000 && state.stage !== 'coffee'; i++) state = advanceMovement(state, route, .05, false, 'lively', 0)
-  assert.equal(state.stage, 'coffee')
+  const plan = planForSeat(layout, seat, 0)
+  let state = createMovementState(plan)
+  // Run idle until the agent is away at a service-wing spot.
+  for (let i = 0; i < 20000 && !['coffee', 'viewing', 'lounging'].includes(state.stage); i++) state = advanceMovement(state, plan, .05, false, 'lively', 0)
+  assert.ok(['coffee', 'viewing', 'lounging'].includes(state.stage), 'idle agent should eventually leave the desk')
   let sawReturn = false, sawSit = false, sawApproach = false
-  for (let i = 0; i < 900 && state.stage !== 'working'; i++) {
-    state = advanceMovement(state, route, .05, true, 'lively', 0)
-    sawReturn ||= state.stage === 'returning'
+  for (let i = 0; i < 2000 && state.stage !== 'working'; i++) {
+    state = advanceMovement(state, plan, .05, true, 'lively', 0)
+    sawReturn ||= state.stage === 'returning' || state.stage === 'walking'
     sawApproach ||= state.stage === 'approaching'
     sawSit ||= state.stage === 'sitting'
     if (state.stage === 'sitting') {
@@ -240,39 +242,52 @@ test('work transitions return along walkways, sit at the monitor and rise cohere
   assert.ok(Math.abs(state.position[1] - seat.position[2] - CHAIR_Z) < .001)
   let sawLeave = false
   for (let i = 0; i < 150; i++) {
-    state = advanceMovement(state, route, .05, false, 'off', 0)
+    state = advanceMovement(state, plan, .05, false, 'off', 0)
     sawLeave ||= state.stage === 'leaving'
     if (state.stage === 'standing') break
   }
   assert.equal(sawLeave, true)
   assert.equal(state.stage, 'standing')
   assert.equal(state.seated, 0)
-  assert.deepEqual(state.position, route.points[0])
+  assert.deepEqual(state.position, plan.home)
 })
 
-test('idle agents take a visible coffee break without claiming a conversation or real work', () => {
-  const layout = makeOfficeLayout(makeTeam(2))
+test('idle agents rotate through ambient activities without claiming a conversation or real work', () => {
+  const layout = makeOfficeLayout(makeTeam(4))
   const seat = layout.seats[0]
-  const route = routeFor(layout, seat, 0)
-  let state = createMovementState(route)
-  let sawPause = false
-  for (let i = 0; i < 4000; i++) {
-    state = advanceMovement(state, route, .05, false, 'lively', 0)
+  const plan = planForSeat(layout, seat, 0)
+  let state = createMovementState(plan)
+  const seen = new Set()
+  for (let i = 0; i < 40000; i++) {
+    state = advanceMovement(state, plan, .05, false, 'lively', 0)
     assert.notEqual(state.stage, 'chatting', 'idle movement must not enter a conversation stage')
-    sawPause ||= state.stage === 'coffee'
+    assert.notEqual(state.stage, 'working', 'idle agents must never appear to work on a task')
+    if (state.stage === 'browsing') seen.add('desk')
+    if (state.stage === 'idling') seen.add(state.activity)
+    if (state.stage === 'coffee') seen.add('coffee')
+    if (state.stage === 'viewing') seen.add('schedule')
+    if (state.stage === 'lounging' && state.seated === 1) seen.add('tv')
+    if (state.stage === 'lounging') {
+      const route = plan.excursions[state.excursion]
+      assert.ok(Math.hypot(state.position[0] - route.points[route.breakIndex][0], state.position[1] - route.points[route.breakIndex][1]) <= SOFA.approach + 1e-6, 'sofa sitting stays between the stand point and the seat')
+    }
   }
-  assert.equal(sawPause, true, 'the shared-space walk should include a coffee break')
+  assert.deepEqual([...seen].sort(), ['coffee', 'desk', 'phone', 'schedule', 'stretch', 'tv'])
   const sipping = makeAvatarRigPose(0, false, 2, 'idle', 0, 0, 1)
   assert.ok(sipping.arms[1].wrist[1] > 1.3, 'coffee break should lift the mug toward the face')
+  // Without a lounge (fewer than three agents) there is no TV, and nobody tries to reach one.
+  const small = makeOfficeLayout(makeTeam(2))
+  assert.equal(tvSeats(small).length, 0)
+  assert.ok(planForSeat(small, small.seats[0], 0).excursions.every(route => route.activity !== 'tv'))
 })
 
 test('cancelling and restarting tasks during chair approach preserves continuous movement', () => {
   const layout = makeOfficeLayout(makeTeam(1))
-  const route = routeFor(layout, layout.seats[0], 0)
-  let state = createMovementState(route)
+  const plan = planForSeat(layout, layout.seats[0], 0)
+  let state = createMovementState(plan)
   const advance = active => {
     const before = state.position
-    state = advanceMovement(state, route, .05, active, 'subtle', 0)
+    state = advanceMovement(state, plan, .05, active, 'subtle', 0)
     assert.ok(Math.hypot(state.position[0] - before[0], state.position[1] - before[1]) < .08, 'position jumped between animation phases')
   }
   for (let i = 0; i < 14; i++) advance(true)
@@ -281,10 +296,14 @@ test('cancelling and restarting tasks during chair approach preserves continuous
   assert.equal(state.stage, 'leaving')
   for (let i = 0; i < 120 && state.stage !== 'working'; i++) advance(true)
   assert.equal(state.stage, 'working')
+  // After a task the agent keeps sitting at the computer, then a new task resumes work in place.
   for (let i = 0; i < 6; i++) advance(false)
-  assert.equal(state.stage, 'rising')
-  for (let i = 0; i < 40 && state.stage !== 'working'; i++) advance(true)
+  assert.equal(state.stage, 'browsing')
+  assert.equal(state.seated, 1)
+  advance(true)
   assert.equal(state.stage, 'working')
+  for (let i = 0; i < 4000 && state.stage !== 'standing'; i++) advance(false)
+  assert.equal(state.stage, 'standing', 'browsing ends and the agent gets up again')
 })
 
 test('appearance preferences reject invalid persisted values and accept user selections', () => {
@@ -350,28 +369,99 @@ test('snapshot refresh preserves movement, and declarations of leadership only g
   for (const [id, actor] of original) assert.equal(refreshed.get(id).state, actor.state, 'SSE refresh must not reset pose or position')
 })
 
-test('simultaneous idle routines reserve cafe wings, keep distance and release visits for tasks', () => {
+test('simultaneous idle routines share spots one at a time, keep distance and release visits for tasks', () => {
   const layout = makeOfficeLayout(makeTeam(20))
   const simulation = reconcileOfficeSimulation(layout)
   const ids = new Set(layout.seats.map(seat => seat.agent.id))
-  const visited = new Set()
-  for (let i = 0; i < 3600; i++) {
+  const visitors = new Set(), activities = new Set()
+  let tvOn = false
+  // Ten simulated minutes: trips are one walker at a time, so a busy floor needs a while to show every kind.
+  for (let i = 0; i < 12000; i++) {
     stepOfficeSimulation(simulation, ids, new Set(), .05, 'lively')
-    const occupied = new Set()
+    const spots = new Set()
+    let walkers = 0
     for (const [id, actor] of simulation) {
-      if (['walking', 'coffee', 'returning'].includes(actor.state.stage)) {
-        assert.equal(occupied.has(actor.resource), false, 'only one visit can occupy a shared kitchenette route')
-        occupied.add(actor.resource)
+      const spot = heldSpot(actor)
+      if (spot) {
+        assert.equal(spots.has(spot), false, `only one agent can hold ${spot}`)
+        spots.add(spot)
       }
-      if (actor.state.stage === 'coffee') visited.add(id)
+      if (['walking', 'returning'].includes(actor.state.stage) && actor.state.excursion >= 0) walkers++
+      if (['coffee', 'viewing', 'lounging'].includes(actor.state.stage)) { visitors.add(id); activities.add(actor.state.stage) }
+      if (actor.state.stage === 'idling') activities.add(actor.state.activity)
       for (const [otherId, other] of simulation) if (otherId !== id) {
         assert.ok(Math.hypot(actor.state.position[0] - other.state.position[0], actor.state.position[1] - other.state.position[1]) >= .72 - 1e-8, 'characters overlap during simultaneous movement')
       }
     }
+    assert.ok(walkers <= 1, 'idle agents walk the corridors one at a time')
+    tvOn ||= tvWatched(simulation)
   }
-  assert.ok(visited.size >= 3, 'the queue should allow different agents to reach the cafe')
+  assert.ok(visitors.size >= 4, 'different agents should take turns leaving their desks')
+  for (const activity of ['coffee', 'viewing', 'lounging', 'stretch', 'phone']) assert.ok(activities.has(activity), `${activity} should occur on a busy floor`)
+  assert.equal(tvOn, true, 'the TV switches on while someone watches')
   for (let i = 0; i < 2400; i++) stepOfficeSimulation(simulation, ids, ids, .05, 'lively')
   assert.ok([...simulation.values()].every(actor => actor.state.stage === 'working'), 'new tasks must interrupt visits and return everyone to their desk')
+  assert.equal(tvWatched(simulation), false)
+})
+
+test('service-wing visit routes stay clear of desks, chairs, the lounge furniture and the reception desk', () => {
+  for (const count of [3, 4, 20, 60]) for (const spacing of ['compact', 'regular', 'spacious']) {
+    const layout = makeOfficeLayout(makeTeam(count), spacing)
+    const lounge = layout.amenities.find(item => item.id === 'meeting')
+    const reception = layout.amenities.find(item => item.id === 'reception')
+    const blockers = [
+      { name: 'sofa', x: lounge.x + SOFA.offsetX + .02, z: lounge.z, w: SOFA.depth + .08, d: SOFA.length + .3 },
+      { name: 'coffee table', x: lounge.x + COFFEE_TABLE.offsetX, z: lounge.z, w: COFFEE_TABLE.width, d: COFFEE_TABLE.depth },
+      { name: 'reception desk', x: reception.x, z: reception.z, w: 3.5, d: .95 },
+    ]
+    layout.seats.forEach((seat, ordinal) => {
+      for (const route of planForSeat(layout, seat, ordinal).excursions.filter(item => item.activity !== 'coffee')) {
+        for (let segment = 0; segment < route.points.length - 1; segment++) {
+          const [ax, az] = route.points[segment], [bx, bz] = route.points[segment + 1]
+          for (let sample = 0; sample <= 24; sample++) {
+            const t = sample / 24, px = ax + (bx - ax) * t, pz = az + (bz - az) * t
+            assert.ok(px > .2 && px < layout.width - .2 && pz > .2 && pz < layout.depth - .2, `${route.spot} leaves the floor (${count}/${spacing})`)
+            // Walking bodies keep ~.3 m clear of furniture.
+            // The stand point right in front of a sofa seat is meant to be close to the sofa, never inside it.
+            const stand = route.points[route.breakIndex]
+            const margin = Math.hypot(px - stand[0], pz - stand[1]) < .5 ? 0 : .3
+            for (const b of blockers) assert.ok(!(Math.abs(px - b.x) < b.w / 2 + margin && Math.abs(pz - b.z) < b.d / 2 + margin), `${route.spot} walks through the ${b.name} (${count}/${spacing})`)
+            for (const other of layout.seats) {
+              const dx = Math.abs(px - other.position[0]), dz = pz - other.position[2]
+              assert.ok(!(dx < 1.35 && dz > -.98 && dz < .55), `desk collision on ${route.spot} at ${count}/${spacing}`)
+              assert.ok(!(dx < .55 && dz > .65 && dz < 1.67), `chair collision on ${route.spot} at ${count}/${spacing}`)
+            }
+          }
+        }
+      }
+    })
+    // Seats are far enough apart for two seated agents, and board spots for two readers.
+    const [a, b] = tvSeats(layout).map(spot => spot.point)
+    assert.ok(Math.hypot(a[0] - b[0], a[1] - b[1]) >= .72)
+    const [c, d] = boardSpots(layout).map(spot => spot.point)
+    assert.ok(Math.hypot(c[0] - d[0], c[1] - d[1]) >= 1.2)
+  }
+})
+
+test('idle poses keep limbs connected at natural lengths', () => {
+  const length = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
+  const poses = [[1, 'browse'], [1, 'lap'], [0, 'stretch'], [0, 'phone'], [0, 'look']]
+  // Every blend amount and moment of the stretch cycle, not only the finished poses.
+  for (const [seated, name] of poses) for (const amount of [.15, .35, .5, .75, 1]) for (const t of [0, .4, .9, 1.3, 1.8, 2.5, 3.2, 4.1]) {
+    const idle = { [name]: amount }
+    {
+      const rig = makeAvatarRigPose(seated, false, t, 'idle', 0, 0, 0, 0, idle)
+      for (const arm of rig.arms) {
+        // Same range as the existing working poses (seated upper arm .54, standing forearm .28).
+        assert.ok(length(arm.shoulder, arm.elbow) > .28 && length(arm.shoulder, arm.elbow) < .56, `upper arm stretched in ${JSON.stringify(idle)}`)
+        assert.ok(length(arm.elbow, arm.wrist) > .25 && length(arm.elbow, arm.wrist) < .46, `forearm stretched in ${JSON.stringify(idle)}`)
+      }
+    }
+  }
+  const stretched = makeAvatarRigPose(0, false, Math.PI / 1.25, 'idle', 0, 0, 0, 0, { stretch: 1 })
+  assert.ok(stretched.arms.every(arm => arm.wrist[1] > 2.2), 'stretching raises both hands overhead')
+  const lounging = makeAvatarRigPose(1, false, 0, 'idle', 0, 0, 0, 0, { lap: 1 })
+  assert.ok(lounging.arms.every(arm => arm.wrist[1] < 1), 'on the sofa the hands rest on the lap')
 })
 
 test('agent editing rejects malformed input and malicious values', () => {

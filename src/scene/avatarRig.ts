@@ -14,9 +14,36 @@ export type AvatarRigPose = {
   legs: [Leg, Leg]
 }
 
+/** Blend amounts (0..1) for ambient idle poses. Presentation only, never task state. */
+export type IdleBlend = { browse?: number; lap?: number; stretch?: number; phone?: number; look?: number }
+export type IdlePose = keyof IdleBlend
+
+const mix = (a: RigPoint, b: RigPoint, amount: number): RigPoint =>
+  [a[0] + (b[0] - a[0]) * amount, a[1] + (b[1] - a[1]) * amount, a[2] + (b[2] - a[2]) * amount]
+const clamp01 = (value = 0) => Math.max(0, Math.min(1, value))
+/** Point `from` + unit(direction) * length. */
+const along = (from: RigPoint, direction: RigPoint, length: number): RigPoint => {
+  const size = Math.hypot(...direction) || 1
+  return [from[0] + direction[0] / size * length, from[1] + direction[1] / size * length, from[2] + direction[2] / size * length]
+}
+const minus = (a: RigPoint, b: RigPoint): RigPoint => [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+/**
+ * Blend an arm toward a target pose by bone direction and bone length rather
+ * than joint position, so neither bone shrinks while the pose changes.
+ */
+function blendArm(arm: { shoulder: RigPoint; elbow: RigPoint; wrist: RigPoint }, elbow: RigPoint, wrist: RigPoint, amount: number) {
+  if (amount <= 0) return
+  const upperFrom = minus(arm.elbow, arm.shoulder), upperTo = minus(elbow, arm.shoulder)
+  const foreFrom = minus(arm.wrist, arm.elbow), foreTo = minus(wrist, elbow)
+  const upperLength = Math.hypot(...upperFrom) + (Math.hypot(...upperTo) - Math.hypot(...upperFrom)) * amount
+  const foreLength = Math.hypot(...foreFrom) + (Math.hypot(...foreTo) - Math.hypot(...foreFrom)) * amount
+  arm.elbow = along(arm.shoulder, mix(upperFrom, upperTo, amount), upperLength)
+  arm.wrist = along(arm.elbow, mix(foreFrom, foreTo, amount), foreLength)
+}
+
 export function makeAvatarRigPose(seatedInput: number, walking: boolean | number, seconds: number,
   activity: 'idle' | 'thinking' | 'coding' | 'researching' | 'finishing' | 'celebrating' | 'error',
-  thinkingProgress = activity === 'thinking' ? 1 : 0, gaitPhase = seconds * 9, coffeeProgress = 0, coffeeSeconds = seconds): AvatarRigPose {
+  thinkingProgress = activity === 'thinking' ? 1 : 0, gaitPhase = seconds * 9, coffeeProgress = 0, coffeeSeconds = seconds, idle: IdleBlend = {}): AvatarRigPose {
   // Ease the body into and out of the chair so the hips and torso do not
   // stop or start at full speed. All joints share this same transition.
   const seatProgress = Math.max(0, Math.min(1, seatedInput))
@@ -54,6 +81,37 @@ export function makeAvatarRigPose(seatedInput: number, walking: boolean | number
         wristZ + coffeeAmount * (.31 - sip * .15 - wristZ)] as RigPoint,
     }
   }) as [Arm, Arm]
+  // Ambient idle poses blend over the base arms. Each keeps the upper arm and
+  // forearm close to their normal lengths so limbs never visibly stretch.
+  const browse = clamp01(idle.browse) * seated, lap = clamp01(idle.lap) * seated
+  const standing = (1 - seated) * (1 - stride)
+  // Stretch: raise both arms overhead, hold, lower, repeat.
+  const stretchCycle = .5 - .5 * Math.cos(seconds * 1.25)
+  const stretch = clamp01(idle.stretch) * standing * stretchCycle * stretchCycle * (3 - 2 * stretchCycle)
+  const phone = clamp01(idle.phone) * standing, look = clamp01(idle.look) * standing
+  arms.forEach((arm, index) => {
+    const side = index === 0 ? -1 : 1
+    if (browse) {
+      // The mouse hand drifts slowly while reading the screen; no typing.
+      if (side === -1) arm.wrist = [arm.wrist[0] + Math.sin(seconds * 1.3) * .035 * browse, arm.wrist[1], arm.wrist[2] + Math.sin(seconds * .9) * .03 * browse]
+    }
+    if (lap) blendArm(arm, [side * .46, .97, .04], [side * .25, .93, .32], lap)
+    if (stretch) {
+      // Swing each arm up in an arc around the shoulder (down, out to the side,
+      // overhead) so the upper arm keeps its length through the whole motion.
+      const angle = stretch * Math.PI, lateral = Math.sin(angle)
+      const elbow: RigPoint = [arm.shoulder[0] + side * lateral * .34, arm.shoulder[1] - Math.cos(angle) * .36, arm.shoulder[2] - .03 * stretch]
+      const inward = .5 * stretch
+      const reach = Math.hypot(lateral * .85 - inward, Math.cos(angle)) || 1
+      const wrist: RigPoint = [elbow[0] + side * (lateral * .85 - inward) / reach * .36, elbow[1] - Math.cos(angle) / reach * .36, elbow[2] + .03]
+      blendArm(arm, elbow, wrist, Math.min(1, stretch * 6))
+    }
+    if (phone) blendArm(arm, [side * .4, 1.31, .07], side === 1 ? [.1, 1.32, .37] : [-.07, 1.29, .36], phone)
+    if (look && side === 1) {
+      // Hand to the chin while reading the schedule.
+      blendArm(arm, [.38, 1.24, .19], [.12, 1.5, .28], look)
+    }
+  })
   const shoePitch: [number, number] = [0, 0]
   const legs = [-1, 1].map((side, index) => {
     const phase = gaitPhase + (side === 1 ? Math.PI : 0)
@@ -94,7 +152,8 @@ export function makeAvatarRigPose(seatedInput: number, walking: boolean | number
   }) as [Leg, Leg]
   return {
     torsoDrop: seated * .4,
-    headPitch: activity === 'researching' ? -.09 : activity === 'error' ? .14 : stride * Math.sin(gaitPhase * 2) * .018,
+    headPitch: (activity === 'researching' ? -.09 : activity === 'error' ? .14 : stride * Math.sin(gaitPhase * 2) * .018)
+      + phone * .26 - look * .07 - lap * .03,
     headRoll: activity === 'thinking' ? Math.sin(seconds * 1.2) * .035 : stride * Math.sin(gaitPhase) * .018,
     // Calm breathing keeps idle characters alive without suggesting speech
     // or a conversation that did not occur.

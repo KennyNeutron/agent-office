@@ -4,6 +4,7 @@ import { useRef } from 'react'
 import { Vector3, type Group } from 'three'
 import { DEPARTMENTS } from '../agents'
 import { departmentDecor } from './officeDecor'
+import { COFFEE_TABLE, SOFA } from './loungeLayout'
 import { DeskClock, WallCalendar } from './ReceptionTimepieces'
 import type { Department } from '../types'
 import type { OfficeLayout, Sector } from './officeLayout'
@@ -247,29 +248,46 @@ function SectorRoom({ sector, preferences, detailed = true }: { sector: Sector; 
   </group>
 }
 
+// A TV lounge: a two-seat sofa faces the wall TV across a low coffee table.
+// Seat height matches the desk chairs, so seated agents rest on the cushions.
 function SharedLounge({ x, z, theme }: { x: number; z: number; theme: OfficePreferences['theme'] }) {
   const tabletop = theme === 'midnight' ? '#9e8a7d' : theme === 'warm' ? '#d3ab86' : '#d6c4ac'
+  const fabric = theme === 'midnight' ? '#5d7590' : '#7895ad', frame = theme === 'midnight' ? '#4b6077' : '#647f97'
+  const { offsetX, seatOffsets, seatTop, depth, length } = SOFA
   return <group position={[x, 0, z]}>
-    {/* The meeting spot is outside all workstation routes and chair footprints. */}
     <mesh position={[0, .003, 0]} receiveShadow>
       <cylinderGeometry args={[2.15, 2.15, .006, 40]}/><meshStandardMaterial color={theme === 'midnight' ? '#3d5965' : '#c8d7cf'} roughness={1}/>
     </mesh>
-    <RoundedBox position={[0, .72, 0]} args={[2.25, .13, .98]} radius={.11} castShadow>
-      <meshStandardMaterial color={tabletop} roughness={.76}/>
-    </RoundedBox>
-    {[-.73, .73].map(x => <mesh key={x} position={[x, .36, 0]}>
-      <cylinderGeometry args={[.055, .07, .68, 10]}/><meshStandardMaterial color="#748395" metalness={.5}/>
-    </mesh>)}
-    {[-1, 1].map(side => <group key={side} position={[side * 1.62, 0, 0]} rotation={[0, side * Math.PI / 2, 0]}>
-      <RoundedBox position={[0, .47, 0]} args={[.7, .12, .72]} radius={.1} castShadow><meshStandardMaterial color="#758da3"/></RoundedBox>
-      <RoundedBox position={[0, .78, .31]} args={[.75, .63, .11]} radius={.075} castShadow><meshStandardMaterial color="#7897ac"/></RoundedBox>
-      <mesh position={[0, .23, 0]}><cylinderGeometry args={[.055, .08, .45, 8]}/><meshStandardMaterial color="#677a8b"/></mesh>
-    </group>)}
-    <mesh position={[0, .82, 0]}><cylinderGeometry args={[.16, .16, .055, 12]}/><meshStandardMaterial color="#f6f8f8"/></mesh>
-    <mesh position={[.45, .795, -.22]}><boxGeometry args={[.36, .018, .27]}/><meshStandardMaterial color="#a9c4d5"/></mesh>
-    <mesh position={[-.43, .79, .16]}><boxGeometry args={[.44, .022, .3]}/><meshStandardMaterial color="#ece5db"/></mesh>
-    <mesh position={[-.43, .806, .16]}><boxGeometry args={[.33, .002, .20]}/><meshStandardMaterial color="#89a5b5"/></mesh>
-    <mesh position={[0, .915, 0]}><sphereGeometry args={[.105, 12, 10]}/><meshStandardMaterial color="#6caa91" roughness={.8}/></mesh>
+    {/* Sofa: base, two seat cushions, backrest and arms. */}
+    <group position={[offsetX, 0, 0]}>
+      <RoundedBox position={[.02, .32, 0]} args={[depth, .4, length]} radius={.06} castShadow><meshStandardMaterial color={frame} roughness={.85}/></RoundedBox>
+      {seatOffsets.map(offset => <RoundedBox key={offset} position={[-.01, seatTop - .08, offset]} args={[depth - .06, .16, length / 2 - .04]} radius={.06} castShadow>
+        <meshStandardMaterial color={fabric} roughness={.92}/>
+      </RoundedBox>)}
+      <RoundedBox position={[depth / 2 + .02, .98, 0]} args={[.18, .66, length]} radius={.07} castShadow><meshStandardMaterial color={frame} roughness={.85}/></RoundedBox>
+      {seatOffsets.map(offset => <RoundedBox key={`back-${offset}`} position={[depth / 2 - .1, 1.0, offset]} args={[.1, .46, length / 2 - .08]} radius={.045}>
+        <meshStandardMaterial color={fabric} roughness={.92}/>
+      </RoundedBox>)}
+      {[-1, 1].map(side => <RoundedBox key={side} position={[.04, .76, side * (length / 2 + .07)]} args={[depth + .04, .36, .14]} radius={.06} castShadow>
+        <meshStandardMaterial color={frame} roughness={.85}/>
+      </RoundedBox>)}
+      {[-1, 1].map(sx => [-1, 1].map(sz => <mesh key={`${sx}${sz}`} position={[sx * (depth / 2 - .06), .06, sz * (length / 2 - .06)]}>
+        <cylinderGeometry args={[.03, .025, .12, 8]}/><meshStandardMaterial color="#3b4656"/>
+      </mesh>))}
+    </group>
+    {/* Low coffee table with a plant, magazines and a cup. */}
+    <group position={[COFFEE_TABLE.offsetX, 0, 0]}>
+      <RoundedBox position={[0, COFFEE_TABLE.height - .04, 0]} args={[COFFEE_TABLE.width, .08, COFFEE_TABLE.depth]} radius={.04} castShadow>
+        <meshStandardMaterial color={tabletop} roughness={.76}/>
+      </RoundedBox>
+      {[-1, 1].map(sx => [-1, 1].map(sz => <mesh key={`${sx}${sz}`} position={[sx * (COFFEE_TABLE.width / 2 - .07), (COFFEE_TABLE.height - .08) / 2, sz * (COFFEE_TABLE.depth / 2 - .08)]}>
+        <boxGeometry args={[.05, COFFEE_TABLE.height - .08, .05]}/><meshStandardMaterial color="#748395" metalness={.5}/>
+      </mesh>))}
+      <mesh position={[0, COFFEE_TABLE.height + .03, -.35]}><cylinderGeometry args={[.09, .08, .06, 12]}/><meshStandardMaterial color="#f6f8f8"/></mesh>
+      <mesh position={[0, COFFEE_TABLE.height + .12, -.35]}><sphereGeometry args={[.1, 12, 10]}/><meshStandardMaterial color="#6caa91" roughness={.8}/></mesh>
+      <mesh position={[.05, COFFEE_TABLE.height + .012, .25]} rotation={[0, .3, 0]}><boxGeometry args={[.3, .016, .22]}/><meshStandardMaterial color="#ece5db"/></mesh>
+      <mesh position={[-.12, COFFEE_TABLE.height + .045, .42]}><cylinderGeometry args={[.045, .04, .09, 12]}/><meshStandardMaterial color="#f7f1e6"/></mesh>
+    </group>
   </group>
 }
 
@@ -321,7 +339,8 @@ function SupportWing({ layout, accent, dark }: { layout: OfficeLayout; accent: s
     <mesh position={[layout.spineX - 1.7, .002, layout.depth / 2]}><boxGeometry args={[.065, .006, layout.depth - .8]}/><meshStandardMaterial color="#a6bbb8"/></mesh>
     {layout.amenities.filter(amenity => amenity.id === 'meeting' || amenity.id === 'focus').map(amenity => <group key={amenity.key} position={[.55, 0, amenity.z]} rotation={[0, Math.PI / 2, 0]}>
       <RoundedBox position={[0, 1.25, 0]} args={[3.1, 2.5, .14]} radius={.035}><meshStandardMaterial color={dark ? '#3a5164' : '#d9e3e8'} roughness={.85}/></RoundedBox>
-      <Panel x={0} y={1.65} z={.1} w={2.1} h={1.05} color={accent}/>
+      {/* The lounge wall carries the TV (LoungeTV); focus nooks keep a pin board. */}
+      {amenity.id === 'focus' && <Panel x={0} y={1.65} z={.1} w={2.1} h={1.05} color={accent}/>}
     </group>)}
     <Planter x={layout.width - .65} z={layout.depth - .6}/>
     <Planter x={.65} z={layout.depth - .65}/>

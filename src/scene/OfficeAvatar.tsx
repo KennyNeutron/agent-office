@@ -4,7 +4,7 @@ import { useRef, type RefObject } from 'react'
 import { MathUtils, Vector3, type Group, type Mesh } from 'three'
 import type { OfficeAgent } from '../types'
 import type { AgentPose } from './agentBehavior'
-import { makeAvatarRigPose, type RigPoint } from './avatarRig'
+import { makeAvatarRigPose, type IdleBlend, type IdlePose, type RigPoint } from './avatarRig'
 
 const UP = new Vector3(0, 1, 0)
 const BONE_START = new Vector3()
@@ -22,9 +22,11 @@ function fitBone(mesh: Mesh | undefined, start: RigPoint, end: RigPoint) {
   mesh.scale.y = length
 }
 
-export function OfficeAvatar({ agent, pose, selected, onSelect, walkRef, gaitRef, seatedRef, coffeeRef, animate = true }: {
+export function OfficeAvatar({ agent, pose, selected, onSelect, walkRef, gaitRef, seatedRef, coffeeRef, idleRef, animate = true }: {
   agent: OfficeAgent; pose: AgentPose; selected: boolean; onSelect: () => void
   walkRef: RefObject<number>; gaitRef: RefObject<number>; seatedRef: RefObject<number>; coffeeRef: RefObject<boolean>
+  /** Current ambient idle pose, if any. */
+  idleRef?: RefObject<IdlePose | null>
   animate?: boolean
 }) {
   const model = useRef<Group>(null)
@@ -44,6 +46,8 @@ export function OfficeAvatar({ agent, pose, selected, onSelect, walkRef, gaitRef
   const coffeeTime = useRef(0)
   const thinkingBlend = useRef(0)
   const walkBlend = useRef(0)
+  const idleBlend = useRef<Required<IdleBlend>>({ browse: 0, lap: 0, stretch: 0, phone: 0, look: 0 })
+  const phone = useRef<Group>(null)
   const skin = agent.id === 'sentinel' ? '#c48c70' : agent.id === 'pixel' ? '#efc8ab' : '#dbad8c'
   const hair = agent.id === 'nova' ? '#2b4058' : agent.id === 'pixel' ? '#894f47' : agent.id === 'sentinel' ? '#41332f' : '#282b43'
 
@@ -53,13 +57,18 @@ export function OfficeAvatar({ agent, pose, selected, onSelect, walkRef, gaitRef
     walkBlend.current = MathUtils.damp(walkBlend.current, walkRef.current, 8, Math.min(delta, .05))
     coffeeBlend.current = MathUtils.damp(coffeeBlend.current, coffeeRef.current ? 1 : 0, 5, Math.min(delta, .05))
     coffeeTime.current = coffeeRef.current ? coffeeTime.current + Math.min(delta, .05) : 0
+    const idlePose = idleRef?.current ?? null
+    for (const name of Object.keys(idleBlend.current) as IdlePose[]) {
+      idleBlend.current[name] = MathUtils.damp(idleBlend.current[name], idlePose === name ? 1 : 0, 4.5, Math.min(delta, .05))
+    }
+    if (phone.current) phone.current.visible = idleBlend.current.phone > .35
     if (coffeeCup.current) { coffeeCup.current.visible = coffeeBlend.current > .2; coffeeCup.current.rotation.x = -.18 * (.5 - .5 * Math.cos(coffeeTime.current * 1.35)) }
-    const rig = makeAvatarRigPose(seatedRef.current, walkBlend.current, t, pose, thinkingBlend.current, gaitRef.current, coffeeBlend.current, coffeeTime.current)
+    const rig = makeAvatarRigPose(seatedRef.current, walkBlend.current, t, pose, thinkingBlend.current, gaitRef.current, coffeeBlend.current, coffeeTime.current, idleBlend.current)
     // Breathing moves the upper body, never lifts the planted shoes off the floor.
     if (model.current) model.current.position.y = 0
     if (torso.current) {
       torso.current.position.y = -rig.torsoDrop + rig.bob
-      torso.current.rotation.x = MathUtils.damp(torso.current.rotation.x, pose === 'error' ? .1 : 0, 7, Math.min(delta, .05))
+      torso.current.rotation.x = MathUtils.damp(torso.current.rotation.x, pose === 'error' ? .1 : -idleBlend.current.lap * .07, 7, Math.min(delta, .05))
     }
     if (head.current) {
       head.current.rotation.x = MathUtils.damp(head.current.rotation.x, rig.headPitch, 7, Math.min(delta, .05))
@@ -137,6 +146,11 @@ export function OfficeAvatar({ agent, pose, selected, onSelect, walkRef, gaitRef
             args={[.058, .061, .085]} radius={.025} castShadow>
             <meshStandardMaterial color={skin} roughness={.86}/>
           </RoundedBox>
+          {side === 1 && <group ref={phone} visible={false} position={[-.05, .05, .1]} rotation={[-.9, 0, 0]}>
+            {/* A phone held in both hands, screen toward the face. */}
+            <RoundedBox args={[.11, .19, .018]} radius={.012} castShadow><meshStandardMaterial color="#1c2433" roughness={.4}/></RoundedBox>
+            <mesh position={[0, .005, .0095]}><planeGeometry args={[.092, .16]}/><meshBasicMaterial color="#7fc4f2" toneMapped={false}/></mesh>
+          </group>}
           {side === 1 && <group ref={coffeeCup} visible={false} position={[0, .065, .16]}>
             <mesh castShadow>
               <cylinderGeometry args={[.056, .046, .14, 14]}/><meshStandardMaterial color="#f7f1e6" roughness={.46}/>
