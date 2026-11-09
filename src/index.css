@@ -132,7 +132,8 @@ select:focus-visible{outline:3px solid #9a96f2;outline-offset:2px}
 .modal fieldset{border:0;margin:0;padding:0;min-width:0}
 .modal input:not([type=color]){width:100%;padding:13px 14px;border:1px solid #e2e6ee;border-radius:9px;background:#fafbfe;color:#27324b;font-size:12px}
 .field-label{display:block;font-size:10px;font-weight:800;letter-spacing:.65px;color:#667286;margin-bottom:9px}
-.modal label[for="mission-dir"] { margin-block-start: 16px; }
+.modal label[for="mission-dir"], .modal .mission-permissions-label { margin-block-start: 16px; }
+.mission-permissions-help { margin-top: 8px; font-size: 11px; }
 .form-error{color:#9c3045;background:#fff2f3;border:1px solid #efd1d7;padding:10px;border-radius:8px;font-size:12px;line-height:1.5;margin-top:12px;overflow-wrap:anywhere}
 .connection-message{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 15px;margin-bottom:20px;border:1px solid #f0d8b1;background:#fff5e7;color:#73501f;border-radius:9px;font-size:12px;line-height:1.5}
 .connection-message button{flex:none;background:#fff;color:#73501f;border:1px solid #dabf98;border-radius:6px;padding:8px}

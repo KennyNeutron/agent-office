@@ -5,7 +5,7 @@ import { mkdir, open, readFile, rename, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { discoverProviders, foldersOverlap, providerCommand } from './providers.mjs'
+import { discoverProviders, foldersOverlap, providerCommand, supportsPermissionMode } from './providers.mjs'
 import { DEFAULT_AGENTS, makeAgent, validStoredAgents, validateAgent } from './agents.mjs'
 import { composeAgentPrompt } from './agent-prompt.mjs'
 import { jsonLines, parseMessage, shrink } from './task-output.mjs'
@@ -233,9 +233,10 @@ app.get('/api/events', (req, res) => {
 app.post('/api/tasks', async (req, res) => {
   if (!historyReadable) return res.status(503).json({ error: 'Task history is unreadable. Preserve and repair the data file before launching tasks.' })
   if (!agentsReadable) return res.status(503).json({ error: 'Agent profiles are unreadable. Preserve and repair the data file before launching tasks.' })
-  const { prompt, agentId, workspace, provider: requestedProvider = 'codex' } = req.body || {}
+  const { prompt, agentId, workspace, provider: requestedProvider = 'codex', permissionMode = 'restricted' } = req.body || {}
   const provider = providers.find(item => item.id === requestedProvider)
   if (!provider) return res.status(400).json({ error: 'Motor de IA desconhecido.' })
+  if (!supportsPermissionMode(provider.id, permissionMode)) return res.status(400).json({ error: 'This permission mode is unavailable for the selected provider.' })
   if (!provider.available) return res.status(503).json({ error: `${provider.name} was not found. Install and authenticate the CLI, then restart Agent Office.` })
   // An in-flight roster write must finish before resolving the selected agent.
   // Otherwise deletion could commit after this task reserves that same profile.
@@ -261,7 +262,8 @@ app.post('/api/tasks', async (req, res) => {
   // Never evict a running job when trimming history.
   const live = tasks.filter(item => item.status === 'running')
   tasks = [...live, ...tasks.filter(item => item.status !== 'running').slice(0, Math.max(0, MAX_TASKS - live.length))]
-  addEvent(task, `Task sent to ${provider.name}.`)
+  addEvent(task, permissionMode === 'restricted' ? `Task sent to ${provider.name}.`
+    : `Task sent to ${provider.name} with ${permissionMode === 'full-access' ? 'Full Access' : 'Approve for me'}.`)
 
   // Reserve the agent and canonical folder before awaiting durable storage.
   const running = { child: null, task, canonical, stopping: null }
@@ -284,7 +286,7 @@ app.post('/api/tasks', async (req, res) => {
   }
 
   const executionPrompt = composeAgentPrompt(agent, task.prompt)
-  const { command, args, input } = providerCommand(provider, canonical, executionPrompt)
+  const { command, args, input } = providerCommand(provider, canonical, executionPrompt, permissionMode)
   let child
   try { child = spawn(command, args, { cwd: canonical, shell: false, windowsHide: true,
     detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }) }
@@ -324,7 +326,7 @@ app.post('/api/tasks', async (req, res) => {
     task.phase = 'idle'; task.finishedAt = stamp()
     if (task.status === 'failed') task.failure ||= shrink(task.events.filter(e => e.kind === 'error').at(-1)?.message || stderr ||
       (code === 0 ? 'Provider exited without a completion event.' : `${provider.name} exited with code ${code}.`), 500)
-    addEvent(task, task.status === 'completed' ? 'Task completed.' : task.status === 'cancelled' ? 'Task cancelled.'
+    addEvent(task, task.status === 'completed' ? 'Provider run finished. See the agent reply for changes and verification.' : task.status === 'cancelled' ? 'Task cancelled.'
       : task.status === 'interrupted' ? 'Task interrupted by office shutdown.' : `Failed: ${task.failure}`, task.status === 'completed' ? 'success' : 'error')
     await persistHistory().catch(() => {})
     running.resolveDone()

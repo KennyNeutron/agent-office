@@ -1,6 +1,7 @@
 export type AgentId = string
 export type Department = 'architecture' | 'engineering' | 'design' | 'quality' | 'research' | 'operations' | 'security' | 'data' | 'general'
 export type ProviderId = 'codex' | 'claude' | 'gemini'
+export type PermissionMode = 'restricted' | 'approve-for-me' | 'full-access'
 export interface ProviderInfo { id: ProviderId; name: string; available: boolean }
 export type TaskStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
 export type TaskPhase = 'thinking' | 'coding' | 'researching' | 'finishing' | 'idle'

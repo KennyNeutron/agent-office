@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, ChevronDown, Command, Info, Moon, Sun, Wifi, WifiOff, X } from 'lucide-react';
-import { demoTasks, type AgentId, type OfficeAgent, type OfficeTask, type ProviderId, type ServerState } from './types';
+import { demoTasks, type AgentId, type OfficeAgent, type OfficeTask, type PermissionMode, type ProviderId, type ServerState } from './types';
 import { AgentsContext } from './agents';
 import { useLanguage } from './locales/i18n';
 import type { View } from './views/types';
@@ -197,7 +197,7 @@ export default function App() {
     if (!agents.length) { setView('team'); notice(tr('Add an agent to create tasks'), 'info'); return; }
     selectAgent(agent || resolvedSelected); setModal(true);
   }
-  async function start(prompt: string) {
+  async function start(prompt: string, permissionMode: PermissionMode) {
     if (starting.current || !prompt.trim() || prompt.length > 10000 || !agents.some(agent => agent.id === resolvedSelected)) return;
     const blocked = !demo && (!online ? 'API OFFLINE' : !server?.providers.some(item => item.id === provider && item.available) ? 'Choose an available AI provider.'
       : tasks.some(task => task.agentId === resolvedSelected && task.status === 'running') ? 'Agent is already working.'
@@ -220,7 +220,7 @@ export default function App() {
       } else {
         let response: Response;
         try {
-          response = await fetch('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agentId: resolvedSelected, provider, prompt: prompt.trim(), workspace }), signal: AbortSignal.timeout(15000) });
+          response = await fetch('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agentId: resolvedSelected, provider, prompt: prompt.trim(), workspace, permissionMode }), signal: AbortSignal.timeout(15000) });
         } catch { throw new Error(tr('No confirmation received. Check task history before trying again.')); }
         const result = await readResponse(response, tr(response.ok ? 'No confirmation received. Check task history before trying again.' : 'Could not start task'));
         if (!isOfficeTask(result.task) || result.task.agentId !== resolvedSelected) throw new Error(tr('No confirmation received. Check task history before trying again.'));

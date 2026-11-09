@@ -22,6 +22,10 @@ export function parseMessage(task, data, addEvent) {
     if (data.type === 'result') {
       message(data.result)
       if (object(data.usage)) task.usage = data.usage
+      if (Array.isArray(data.permission_denials) && data.permission_denials.length) {
+        const tools = [...new Set(data.permission_denials.map(item => text(item?.tool_name)).filter(Boolean))]
+        addEvent(task, shrink(`Claude Code blocked actions that required approval${tools.length ? ` (${tools.join(', ')})` : ''}. Check the agent reply for work that could not run.`, 350), 'error')
+      }
       if (data.is_error || (text(data.subtype) && data.subtype !== 'success')) {
         failure(text(data.result) || (Array.isArray(data.errors) ? data.errors.filter(item => text(item)).join('; ') : '') || 'Claude Code reported an error.')
       }

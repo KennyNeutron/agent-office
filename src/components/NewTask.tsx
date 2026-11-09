@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ArrowRight, Check, ShieldCheck, X } from 'lucide-react';
-import type { AgentId, ProviderId, ProviderInfo } from '../types';
+import type { AgentId, PermissionMode, ProviderId, ProviderInfo } from '../types';
 import { useAgents } from '../agents';
 import { useLanguage } from '../locales/i18n';
 import { Avatar } from './Avatar';
@@ -19,7 +19,7 @@ export function NewTask({ agent, setAgent, workspace, setWorkspace, close, start
   workspace: string;
   setWorkspace: (v: string) => void;
   close: () => void;
-  start: (prompt: string) => void;
+  start: (prompt: string, permissionMode: PermissionMode) => void;
   busy: boolean;
   demo: boolean;
   provider: ProviderId;
@@ -32,13 +32,14 @@ export function NewTask({ agent, setAgent, workspace, setWorkspace, close, start
   const { t: tr } = useLanguage();
   const agents = useAgents();
   const [prompt, setPrompt] = useState('');
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>('restricted');
   const options = providers.length ? providers : defaultProviders;
   const blocked = demo ? '' : !online ? 'API OFFLINE' : !options.some(item => item.available) ? 'No AI provider is available.'
     : !options.some(item => item.id === provider && item.available) ? 'Choose an available AI provider.'
     : agentBusy ? 'Agent is already working.' : !isAbsoluteWorkspace(workspace) ? 'Enter an absolute project path.' : '';
 
   return <Modal close={close} busy={busy} labelledBy="new-mission">
-    <form onSubmit={event => { event.preventDefault(); if (!busy && !blocked && prompt.trim() && agents.some(item => item.id === agent)) start(prompt); }}>
+    <form onSubmit={event => { event.preventDefault(); if (!busy && !blocked && prompt.trim() && agents.some(item => item.id === agent)) start(prompt, permissionMode); }}>
       <div className="modal-title">
         <div><span className="eyebrow"><span /> {tr('A NEW MISSION')}</span><h2 id="new-mission">{tr('Create a task')} <b>✳</b></h2></div>
         <button type="button" onClick={close} disabled={busy} aria-label={tr('Close')}><X size={19}/></button>
@@ -53,11 +54,28 @@ export function NewTask({ agent, setAgent, workspace, setWorkspace, close, start
         </button>)}
       </div>
       <label htmlFor="task-provider">{tr('AI provider')}</label>
-      <select id="task-provider" className="language-picker" value={provider} onChange={event => setProvider(event.target.value as ProviderId)}>
+      <select id="task-provider" className="language-picker" value={provider} onChange={event => { setProvider(event.target.value as ProviderId); setPermissionMode('restricted'); }}>
         {options.map(item => <option key={item.id} value={item.id} disabled={!demo && !item.available}>
           {item.name}{!demo && !item.available ? ` (${tr('NOT FOUND')})` : ''}
         </option>)}
       </select>
+      {!demo && <>
+        <label className="mission-permissions-label" htmlFor="mission-permissions">{tr('Agent permissions')}</label>
+        <select id="mission-permissions" className="language-picker" value={permissionMode} aria-describedby="mission-permissions-help"
+          onChange={event => setPermissionMode(event.target.value as PermissionMode)}>
+          <option value="restricted">{tr('Restricted')}</option>
+          <option value="ask" disabled>{tr('Ask for approval (requires an interactive session)')}</option>
+          <option value="approve-for-me" disabled={provider === 'gemini'}>{tr('Approve for me')}</option>
+          <option value="full-access">{tr('Full Access')}</option>
+        </select>
+        <p id="mission-permissions-help" className="mission-permissions-help">
+          {tr(permissionMode === 'full-access'
+            ? 'This run can edit files outside the project and run commands such as Git with your account permissions.'
+            : permissionMode === 'approve-for-me'
+              ? 'The provider reviews approval requests automatically.'
+              : 'Interactive approval prompts are unavailable in background runs.')}
+        </p>
+      </>}
       {!import.meta.env.MODE.includes('public-demo') && <><label htmlFor="mission-dir">{tr('PROJECT DIRECTORY')}</label>
       <input id="mission-dir" maxLength={1000} value={workspace} onChange={event => setWorkspace(event.target.value)} placeholder={tr('Absolute project path')}/></>}
       </fieldset>

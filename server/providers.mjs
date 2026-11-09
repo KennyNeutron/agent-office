@@ -48,10 +48,29 @@ export function discoverProviders(env = process.env, platform = process.platform
   })
 }
 
-export function launchArgs(id, workspace) {
-  if (id === 'codex') return ['exec', '--json', '--skip-git-repo-check', '-s', 'workspace-write', '-C', workspace, '-']
-  if (id === 'claude') return ['--print', '--verbose', '--output-format', 'stream-json', '--permission-mode', 'acceptEdits', '--permission-prompts', 'none']
-  if (id === 'gemini') return ['-p', '--output-format', 'stream-json', '--approval-mode', 'auto_edit']
+export function supportsPermissionMode(id, mode) {
+  return mode === 'restricted' || mode === 'full-access' ||
+    (mode === 'approve-for-me' && (id === 'codex' || id === 'claude'))
+}
+
+export function launchArgs(id, workspace, permissionMode = 'restricted') {
+  if (!supportsPermissionMode(id, permissionMode)) throw new Error('Unsupported permission mode.')
+  const fullAccess = permissionMode === 'full-access'
+  const autoReview = permissionMode === 'approve-for-me'
+  if (id === 'codex') {
+    const permissions = fullAccess ? ['--dangerously-bypass-approvals-and-sandbox']
+      : autoReview ? ['--approve-for-me'] : ['-s', 'workspace-write']
+    return ['exec', '--json', '--skip-git-repo-check', ...permissions, '-C', workspace, '-']
+  }
+  if (id === 'claude') {
+    const permissions = fullAccess ? ['--dangerously-skip-permissions']
+      : ['--permission-mode', autoReview ? 'auto' : 'acceptEdits']
+    return ['--print', '--verbose', '--output-format', 'stream-json', ...permissions, '--permission-prompts', 'none']
+  }
+  if (id === 'gemini') {
+    return ['-p', '--output-format', 'stream-json', '--approval-mode', fullAccess ? 'yolo' : 'auto_edit',
+      ...(fullAccess ? ['--sandbox=false'] : [])]
+  }
   throw new Error('Motor de IA desconhecido.')
 }
 
@@ -66,8 +85,8 @@ export function foldersOverlap(left, right, platform = process.platform) {
   return inside(a, b) || inside(b, a)
 }
 
-export function providerCommand(provider, workspace, prompt) {
-  const args = launchArgs(provider.id, workspace)
+export function providerCommand(provider, workspace, prompt, permissionMode) {
+  const args = launchArgs(provider.id, workspace, permissionMode)
   if (provider.id === 'gemini') args.splice(1, 0, prompt)
   const script = /\.[cm]?js$/i.test(provider.bin)
   return { command: script ? process.execPath : provider.bin, args: script ? [provider.bin, ...args] : args,

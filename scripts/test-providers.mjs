@@ -13,6 +13,18 @@ test('supports three CLI choices and safe launch arguments', () => {
   assert.throws(() => launchArgs('other', '/projects/a'))
 })
 
+test('permission escalation is explicit and unavailable modes are rejected', () => {
+  const workspace = '/projects/a'
+  assert.ok(launchArgs('codex', workspace, 'approve-for-me').includes('--approve-for-me'))
+  assert.ok(launchArgs('claude', workspace, 'approve-for-me').includes('auto'))
+  assert.ok(launchArgs('codex', workspace, 'full-access').includes('--dangerously-bypass-approvals-and-sandbox'))
+  assert.ok(launchArgs('claude', workspace, 'full-access').includes('--dangerously-skip-permissions'))
+  assert.ok(launchArgs('gemini', workspace, 'full-access').includes('--sandbox=false'))
+  assert.throws(() => launchArgs('gemini', workspace, 'approve-for-me'))
+  assert.throws(() => launchArgs('codex', workspace, 'ask'))
+  assert.throws(() => launchArgs('codex', workspace, true))
+})
+
 test('rejects concurrent tasks in matching or nested folders', () => {
   const root = join(tmpdir(), 'case-project')
   assert.equal(foldersOverlap(root, root), true)
