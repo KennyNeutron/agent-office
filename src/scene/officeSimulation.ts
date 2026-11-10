@@ -1,7 +1,7 @@
 import type { OfficeLayout, Seat } from './officeLayout'
 import type { OfficeMotion } from './officePreferences'
-import { advanceMovement, CHAIR_Z, STAND_SIDE_X, STAND_Z, createMovementState, makeVisitRoute, makeWalkRoute, type ActorPlan, type MovementState, type Route } from './officeMotion.ts'
-import { boardSpots, tvSeats } from './loungeLayout.ts'
+import { advanceMovement, CHAIR_Z, STAND_SIDE_X, STAND_Z, createMovementState, makeVisitRoute, makeWalkRoute, PAIRED, type ActorPlan, type Excursion, type MovementState, type Partner, type Route } from './officeMotion.ts'
+import { boardSpots, chessSeats, dartsSpots, pingPongSpots, tvSeats } from './loungeLayout.ts'
 
 export type OfficeActor = { state: MovementState; plan: ActorPlan; ordinal: number; gait: number; blocked?: boolean }
 export type OfficeSimulation = Map<string, OfficeActor>
@@ -19,7 +19,7 @@ export function routeForSeat(layout: OfficeLayout, seat: Seat, ordinal: number):
   return { route, resource: route.spot }
 }
 
-/** Every idle excursion for a seat: coffee, the schedule board spots and, when there is a lounge, the TV sofa seats. */
+/** Every idle excursion for a seat: coffee, the schedule board, the TV sofa (with a lounge) and the games room. */
 export function planForSeat(layout: OfficeLayout, seat: Seat, ordinal: number): ActorPlan {
   const sector = layout.sectors.find(area => area.key === seat.sectorKey)!
   const coffeeRoute = routeForSeat(layout, seat, ordinal).route
@@ -30,6 +30,9 @@ export function planForSeat(layout: OfficeLayout, seat: Seat, ordinal: number): 
       coffeeRoute,
       ...boardSpots(layout).map(spot => makeVisitRoute(seat, sector, front, layout.spineX, spot, 'schedule')),
       ...tvSeats(layout).map(spot => makeVisitRoute(seat, sector, front, layout.spineX, spot, 'tv')),
+      ...dartsSpots(layout).map(spot => makeVisitRoute(seat, sector, front, layout.spineX, spot, 'darts')),
+      ...pingPongSpots(layout).map(spot => makeVisitRoute(seat, sector, front, layout.spineX, spot, 'pingpong')),
+      ...chessSeats(layout).map(spot => makeVisitRoute(seat, sector, front, layout.spineX, spot, 'chess')),
     ],
   }
 }
@@ -59,10 +62,37 @@ export function heldSpot(actor: OfficeActor): string | null {
 }
 /** Idle excursions walk the corridors one at a time so two agents never meet head-on. */
 const usesCorridor = (actor: OfficeActor) => WALKING.has(actor.state.stage) && actor.state.excursion >= 0
+const routeOf = (actor: OfficeActor): Route | undefined => actor.state.excursion >= 0 ? actor.plan.excursions[actor.state.excursion] : undefined
+/** Settled at its spot and not yet done. */
+const settled = (actor: OfficeActor, route: Route) => actor.state.stage === route.breakStage && actor.state.wait < actor.state.duration
 
-// Shared spots (each sofa seat, board spot and kitchenette wing) host one agent
-// at a time, and only one idle agent walks the corridors at once. Real tasks
-// always outrank idle routines.
+/** The opponent at this agent's two-player game: playing, on the way, or absent. */
+export function partnerOf(simulation: OfficeSimulation, actor: OfficeActor): Partner {
+  const route = routeOf(actor)
+  if (!route || !PAIRED.has(route.activity)) return 'none'
+  for (const other of simulation.values()) {
+    const theirs = routeOf(other)
+    if (other === actor || theirs?.activity !== route.activity || theirs.spot === route.spot) continue
+    if (settled(other, theirs)) return 'playing'
+    if (other.state.stage === 'walking' && other.state.cursor <= theirs.breakIndex) return 'coming'
+  }
+  return 'none'
+}
+
+/** Two-player games where someone sits alone with nobody on the way to join. */
+export function gamesWaiting(simulation: OfficeSimulation): Set<Excursion> {
+  const waiting = new Set<Excursion>()
+  for (const actor of simulation.values()) {
+    const route = routeOf(actor)
+    if (route && PAIRED.has(route.activity) && settled(actor, route) && actor.state.wait === 0 && partnerOf(simulation, actor) === 'none') waiting.add(route.activity)
+  }
+  return waiting
+}
+
+// Shared spots (each sofa seat, board spot, game position and kitchenette wing)
+// host one agent at a time, and only one idle agent walks the corridors at once.
+// Chess and table tennis pair two agents: a lone player waits for an opponent,
+// and idle agents usually go to join them. Real tasks always outrank idle routines.
 export function stepOfficeSimulation(simulation: OfficeSimulation, visibleIds: ReadonlySet<string>, activeIds: ReadonlySet<string>, dt: number, motion: OfficeMotion) {
   const cell = (position: [number, number]) => `${Math.floor(position[0])},${Math.floor(position[1])}`
   const occupied = new Map<string, Set<string>>()
@@ -76,6 +106,7 @@ export function stepOfficeSimulation(simulation: OfficeSimulation, visibleIds: R
   let walkers = [...simulation.values()].filter(usesCorridor).length
   // Agents finishing a visit go home before anyone new sets out.
   const homeward = [...simulation.values()].some(actor => VISITING.has(actor.state.stage) && actor.state.wait >= actor.state.duration)
+  const waiting = gamesWaiting(simulation)
   const candidates = [...simulation.entries()].filter(([id, actor]) => visibleIds.has(id) || AWAY.has(actor.state.stage) || activeIds.has(id) ||
     !['standing', 'working', 'browsing', 'idling'].includes(actor.state.stage) || (actor.state.stage === 'working' && !activeIds.has(id)))
     .sort(([a, actorA], [b, actorB]) => Number(activeIds.has(b)) - Number(activeIds.has(a)) || Number(AWAY.has(actorB.state.stage)) - Number(AWAY.has(actorA.state.stage)) ||
@@ -86,6 +117,8 @@ export function stepOfficeSimulation(simulation: OfficeSimulation, visibleIds: R
     const next = advanceMovement(prior, actor.plan, dt, activeIds.has(id), motion, actor.ordinal, {
       depart: route => visibleIds.has(id) && !spots.has(route.spot) && walkers === 0 && !homeward,
       corridor: walkers === 0,
+      partner: partnerOf(simulation, actor),
+      waiting,
     })
     // Personal space: a step may not move closer than .72 m to someone. Stepping
     // away is always allowed. Between two agents who both want to move, the
@@ -125,3 +158,14 @@ export function tvWatched(simulation: OfficeSimulation): boolean {
   return false
 }
 
+
+/** Spot keys currently in use for an activity by agents settled at the spot (e.g. both table tennis ends). */
+export function playersAt(simulation: OfficeSimulation, activity: string): Set<string> {
+  const spots = new Set<string>()
+  for (const actor of simulation.values()) {
+    const { stage, excursion } = actor.state
+    const route = excursion >= 0 ? actor.plan.excursions[excursion] : undefined
+    if (route?.activity === activity && (stage === 'viewing' || stage === 'lounging')) spots.add(route.spot)
+  }
+  return spots
+}

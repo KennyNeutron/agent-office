@@ -15,7 +15,7 @@ export type AvatarRigPose = {
 }
 
 /** Blend amounts (0..1) for ambient idle poses. Presentation only, never task state. */
-export type IdleBlend = { browse?: number; lap?: number; stretch?: number; phone?: number; look?: number }
+export type IdleBlend = { browse?: number; lap?: number; stretch?: number; phone?: number; look?: number; darts?: number; pingpong?: number; chess?: number }
 export type IdlePose = keyof IdleBlend
 
 const mix = (a: RigPoint, b: RigPoint, amount: number): RigPoint =>
@@ -50,7 +50,9 @@ export function makeAvatarRigPose(seatedInput: number, walking: boolean | number
   const seated = seatProgress * seatProgress * (3 - 2 * seatProgress)
   const stride = (typeof walking === 'boolean' ? Number(walking) : Math.max(0, Math.min(1, walking))) * (1 - seated)
   const typing = seated > .94 && activity === 'coding'
-  const thinking = seated * Math.max(0, Math.min(1, thinkingProgress))
+  // Chess: alternate between pondering (hand to chin) and hands back on the table to move a piece.
+  const ponder = Math.max(0, Math.min(1, idle.chess ?? 0)) * Math.max(0, Math.min(1, Math.sin(seconds * .55) * 1.6 + .3))
+  const thinking = seated * Math.max(Math.max(0, Math.min(1, thinkingProgress)), ponder)
   const coffee = Math.max(0, Math.min(1, coffeeProgress)) * (1 - seated) * (1 - stride)
   const sip = .5 - .5 * Math.cos(coffeeSeconds * 1.35)
   const arms = [-1, 1].map(side => {
@@ -89,6 +91,7 @@ export function makeAvatarRigPose(seatedInput: number, walking: boolean | number
   const stretchCycle = .5 - .5 * Math.cos(seconds * 1.25)
   const stretch = clamp01(idle.stretch) * standing * stretchCycle * stretchCycle * (3 - 2 * stretchCycle)
   const phone = clamp01(idle.phone) * standing, look = clamp01(idle.look) * standing
+  const darts = clamp01(idle.darts) * standing, pingpong = clamp01(idle.pingpong) * standing
   arms.forEach((arm, index) => {
     const side = index === 0 ? -1 : 1
     if (browse) {
@@ -107,6 +110,20 @@ export function makeAvatarRigPose(seatedInput: number, walking: boolean | number
       blendArm(arm, elbow, wrist, Math.min(1, stretch * 6))
     }
     if (phone) blendArm(arm, [side * .4, 1.31, .07], side === 1 ? [.1, 1.32, .37] : [-.07, 1.29, .36], phone)
+    if (darts && side === 1) {
+      // Aim with the dart beside the face, then a quick forward release.
+      const cycle = (seconds * .7) % 1
+      const release = cycle < .7 ? 0 : Math.sin((cycle - .7) / .3 * Math.PI)
+      const elbow = mix([.33, 1.6, .26], [.33, 1.66, .34], release)
+      const wrist = mix([.22, 1.86, .12], [.27, 1.86, .66], release)
+      blendArm(arm, elbow, wrist, darts)
+    }
+    if (pingpong) {
+      // Ready stance: paddle hand forward, swinging across the body; free hand out for balance.
+      const swing = Math.sin(seconds * 3.1)
+      if (side === 1) blendArm(arm, [.44, 1.34, .2], [.3 + swing * .17, 1.27 + Math.abs(swing) * .05, .46], pingpong)
+      else blendArm(arm, [-.43, 1.33, .12], [-.33, 1.22, .4], pingpong)
+    }
     if (look && side === 1) {
       // Hand to the chin while reading the schedule.
       blendArm(arm, [.38, 1.24, .19], [.12, 1.5, .28], look)

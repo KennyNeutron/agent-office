@@ -46,8 +46,10 @@ export function OfficeAvatar({ agent, pose, selected, onSelect, walkRef, gaitRef
   const coffeeTime = useRef(0)
   const thinkingBlend = useRef(0)
   const walkBlend = useRef(0)
-  const idleBlend = useRef<Required<IdleBlend>>({ browse: 0, lap: 0, stretch: 0, phone: 0, look: 0 })
+  const idleBlend = useRef<Required<IdleBlend>>({ browse: 0, lap: 0, stretch: 0, phone: 0, look: 0, darts: 0, pingpong: 0, chess: 0 })
   const phone = useRef<Group>(null)
+  const paddle = useRef<Group>(null)
+  const dart = useRef<Group>(null)
   const skin = agent.id === 'sentinel' ? '#c48c70' : agent.id === 'pixel' ? '#efc8ab' : '#dbad8c'
   const hair = agent.id === 'nova' ? '#2b4058' : agent.id === 'pixel' ? '#894f47' : agent.id === 'sentinel' ? '#41332f' : '#282b43'
 
@@ -62,6 +64,8 @@ export function OfficeAvatar({ agent, pose, selected, onSelect, walkRef, gaitRef
       idleBlend.current[name] = MathUtils.damp(idleBlend.current[name], idlePose === name ? 1 : 0, 4.5, Math.min(delta, .05))
     }
     if (phone.current) phone.current.visible = idleBlend.current.phone > .35
+    if (paddle.current) paddle.current.visible = idleBlend.current.pingpong > .35
+    if (dart.current) dart.current.visible = idleBlend.current.darts > .35
     if (coffeeCup.current) { coffeeCup.current.visible = coffeeBlend.current > .2; coffeeCup.current.rotation.x = -.18 * (.5 - .5 * Math.cos(coffeeTime.current * 1.35)) }
     const rig = makeAvatarRigPose(seatedRef.current, walkBlend.current, t, pose, thinkingBlend.current, gaitRef.current, coffeeBlend.current, coffeeTime.current, idleBlend.current)
     // Breathing moves the upper body, never lifts the planted shoes off the floor.
@@ -146,6 +150,17 @@ export function OfficeAvatar({ agent, pose, selected, onSelect, walkRef, gaitRef
             args={[.058, .061, .085]} radius={.025} castShadow>
             <meshStandardMaterial color={skin} roughness={.86}/>
           </RoundedBox>
+          {side === 1 && <group ref={paddle} visible={false} position={[0, .02, .17]} rotation={[0, 0, Math.PI / 2]}>
+            {/* Table tennis paddle: red rubber face on a wooden handle. */}
+            <mesh position={[0, -.04, 0]}><cylinderGeometry args={[.02, .022, .1, 8]}/><meshStandardMaterial color="#b7895b"/></mesh>
+            <mesh position={[0, .07, 0]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[.085, .085, .014, 18]}/><meshStandardMaterial color="#d33a3a" roughness={.7}/></mesh>
+          </group>}
+          {side === 1 && <group ref={dart} visible={false} position={[0, .03, .12]} rotation={[Math.PI / 2, 0, 0]}>
+            {/* A dart pinched between the fingers, pointing forward. */}
+            <mesh><cylinderGeometry args={[.007, .007, .12, 6]}/><meshStandardMaterial color="#c9ced6" metalness={.7}/></mesh>
+            <mesh position={[0, .07, 0]}><coneGeometry args={[.006, .03, 6]}/><meshStandardMaterial color="#e5e7eb" metalness={.8}/></mesh>
+            <mesh position={[0, -.07, 0]} rotation={[0, Math.PI / 4, 0]}><boxGeometry args={[.04, .035, .002]}/><meshStandardMaterial color="#e2566b"/></mesh>
+          </group>}
           {side === 1 && <group ref={phone} visible={false} position={[-.05, .05, .1]} rotation={[-.9, 0, 0]}>
             {/* A phone held in both hands, screen toward the face. */}
             <RoundedBox args={[.11, .19, .018]} radius={.012} castShadow><meshStandardMaterial color="#1c2433" roughness={.4}/></RoundedBox>

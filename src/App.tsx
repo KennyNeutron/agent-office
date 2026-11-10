@@ -398,7 +398,7 @@ export default function App() {
       <div className="app-main">
         <header className="topbar"><div className="crumb"><span><Command size={15}/></span>{' ' + tr('My workspace') + ' '}<b>/</b><strong>{tr(view === 'studio' ? 'Office studio' : view === 'tasks' ? 'Activity & tasks' : view === 'team' ? 'Agent team' : 'Settings')}</strong><ChevronDown size={13}/></div>
           <div className="topbar-actions"><time>{formatTime(now)}</time><i/>{PUBLIC_DEMO ? <span className="api-badge on"><Wifi size={14}/>{tr('Demo environment')}</span> : <span className={cliReady ? 'api-badge on' : 'api-badge'}>{cliReady ? <Wifi size={14}/> : <WifiOff size={14}/>} {tr(cliReady ? 'READY' : online ? 'NOT FOUND' : 'API OFFLINE')}</span>}
-            {PUBLIC_DEMO ? <span className="mode-btn demo"><Dot status="amber"/>{tr('DEMO MODE')}</span> : <button className={demo ? 'mode-btn demo' : 'mode-btn live'} aria-pressed={demo} onClick={() => changeMode(!demo)}><Dot status={demo ? 'amber' : online ? 'running' : 'failed'}/>{tr(demo ? 'DEMO MODE' : 'LIVE MODE')} <ChevronDown size={13}/></button>}
+            {PUBLIC_DEMO ? <span className="mode-btn demo"><Dot status="amber"/>{tr('DEMO MODE')}</span> : <button className={demo ? 'mode-btn demo' : 'mode-btn live'} aria-pressed={demo} onClick={() => changeMode(!demo)}><Dot status={demo ? 'amber' : online ? 'online' : 'failed'}/>{tr(demo ? 'DEMO MODE' : 'LIVE MODE')} <ChevronDown size={13}/></button>}
             <button type="button" className="theme-toggle" aria-label={tr('Dark mode')} aria-pressed={darkMode} title={tr('Dark mode')} onClick={toggleTheme}>
               {darkMode ? <Sun size={16} aria-hidden="true"/> : <Moon size={16} aria-hidden="true"/>}
             </button>

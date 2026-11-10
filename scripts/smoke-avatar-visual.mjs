@@ -101,21 +101,21 @@ try {
   const travel = Math.hypot(walkingSamples.at(-1).x - walkingSamples[0].x, walkingSamples.at(-1).z - walkingSamples[0].z)
   assert.ok(travel > .28, `Captured walk must show real position change; observed ${travel.toFixed(3)}m`)
   assert.ok(walkingSamples.filter(item => item.walking).length >= 4, 'At least half the captured poses must be moving')
-  // Verify the full idle story reaches the kitchenette and visibly animates the cup.
-  await page.waitForFunction(() => document.querySelector('.scene-phase-label[data-agent="pixel"]')?.dataset.coffeeBreak === 'true',
-    { polling: 'raf', timeout: 90000 })
+  // Verify an idle agent reaches a shared spot (kitchenette, TV, schedule board or games room).
+  const AWAY = ['coffee', 'viewing', 'lounging']
+  await page.waitForFunction(away => away.includes(document.querySelector('.scene-phase-label[data-agent="pixel"]')?.dataset.movementStage),
+    { polling: 'raf', timeout: 240000 }, AWAY)
   // Frame the whole office for a shared-space activity that leaves the desk area.
   await page.click('button.scene-overview-btn')
   await page.waitForFunction(() => document.querySelector('.scene-phase-overlay')?.classList.contains('is-overview'),
     { polling: 'raf', timeout: 5000 })
   await sleep(450)
-  const coffeeLabel = await page.$('.scene-phase-label[data-agent="pixel"]')
-  const coffeeFrame = await page.$('.scene-frame')
-  await coffeeFrame.screenshot({ path: resolve('work/avatar-coffee-break.png') })
-  const coffeeStage = await coffeeLabel.evaluate(el => el.dataset.movementStage)
-  assert.equal(coffeeStage, 'coffee', 'Coffee capture must occur at the coffee station')
-  await page.waitForFunction(() => document.querySelector('.scene-phase-label[data-agent="pixel"]')?.dataset.coffeeBreak !== 'true',
-    { polling: 'raf', timeout: 12000 })
+  const awayLabel = await page.$('.scene-phase-label[data-agent="pixel"]')
+  await (await page.$('.scene-frame')).screenshot({ path: resolve('work/avatar-idle-activity.png') })
+  const awayActivity = await awayLabel.evaluate(el => el.dataset.idleActivity)
+  assert.ok(['coffee', 'schedule', 'tv', 'darts', 'pingpong', 'chess'].includes(awayActivity), `Unexpected away activity: ${awayActivity}`)
+  await page.waitForFunction(away => !away.includes(document.querySelector('.scene-phase-label[data-agent="pixel"]')?.dataset.movementStage),
+    { polling: 'raf', timeout: 60000 }, AWAY)
   await capture(2, 'idle-after-walking')
   const webgl = await page.$eval('canvas', el => {
     const context = el.getContext('webgl2')
@@ -123,7 +123,7 @@ try {
   })
   assert.deepEqual(errors, [], `Browser errors: ${errors.join(' | ')}`)
   assert.ok(webgl.active && !webgl.lost, 'WebGL context must remain available')
-  console.log(JSON.stringify({ avatarVisual: 'passed', walkingMetersCaptured: Number(travel.toFixed(3)), coffeeBreak: 'passed', captures: ['working-early', 'working-seated', 'working-close-unobstructed', 'thinking-close', 'thinking-front', 'standing-idle', ...Array.from({ length: 8 }, (_, index) => `walk-cycle-${index + 1}`), 'coffee-break', 'idle-after-walking'], webgl, consoleErrors: errors.length }))
+  console.log(JSON.stringify({ avatarVisual: 'passed', walkingMetersCaptured: Number(travel.toFixed(3)), idleActivity: awayActivity, captures: ['working-early', 'working-seated', 'working-close-unobstructed', 'thinking-close', 'thinking-front', 'standing-idle', ...Array.from({ length: 8 }, (_, index) => `walk-cycle-${index + 1}`), 'idle-activity', 'idle-after-walking'], webgl, consoleErrors: errors.length }))
 } finally {
   if (browser) {
     const watchdog = setTimeout(() => browser.process()?.kill(), 7000)

@@ -419,6 +419,7 @@ export function OfficeCampus({ layout, preferences, detailedSectorKeys }: { layo
       : amenity.id === 'coffee'
         ? <CoffeePoint key={amenity.key} x={amenity.x} z={amenity.z}/>
         : amenity.id === 'reception' ? <Reception key={amenity.key} x={amenity.x} z={amenity.z} accent={preferences.accent} animate={preferences.motion !== 'off'}/>
+        : amenity.id === 'games' ? null
         : <FocusNook key={amenity.key} x={amenity.x} z={amenity.z}/>)}
     <SupportWing layout={layout} accent={preferences.accent} dark={preferences.theme === 'midnight'}/>
     <GlassFacade width={layout.width} depth={layout.depth} theme={preferences.theme}/>

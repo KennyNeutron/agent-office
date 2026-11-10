@@ -4,7 +4,7 @@ import type { VisitSpot } from './loungeLayout'
 
 export type Point = [number, number]
 /** Idle activities that leave the desk. */
-export type Excursion = 'coffee' | 'schedule' | 'tv'
+export type Excursion = 'coffee' | 'schedule' | 'tv' | 'darts' | 'pingpong' | 'chess'
 /** Everything an idle agent can do. Ambient presentation only: none of it reflects task progress. */
 export type IdleActivity = 'desk' | 'stretch' | 'phone' | Excursion
 export type VisitStage = 'coffee' | 'resting' | 'viewing' | 'lounging'
@@ -61,7 +61,9 @@ export function makeVisitRoute(seat: Seat, sector: Sector, front: number, spineX
   const sideAisle = sector.center[0] - sector.width / 2 + .55
   const outbound: Point[] = [[x + STAND_SIDE_X, z + STAND_Z], [x + STAND_SIDE_X, z + AISLE_Z], [sideAisle, z + AISLE_Z], [sideAisle, front], [spineX, front], ...spot.lane]
   const points = [...outbound, ...outbound.slice(0, -1).reverse()]
-  return timed(points, outbound.length - 1, activity === 'tv' ? 'lounging' : 'viewing', activity, spot.key, spot.facing, activity === 'tv' ? spot.point : undefined)
+  // Seated visits (sofa, chess chair) sit back from the stand point into the seat; the rest stand at the spot.
+  const seated = activity === 'tv' || activity === 'chess'
+  return timed(points, outbound.length - 1, seated ? 'lounging' : 'viewing', activity, spot.key, spot.facing, seated ? spot.point : undefined)
 }
 
 export function walkAt(route: Route, seconds: number, motion: OfficeMotion): { position: Point; walking: boolean; resting: boolean; facing: number } {
@@ -101,8 +103,10 @@ export type MovementState = {
   activity: IdleActivity | null
   /** Index into the plan's excursions while away from the desk, otherwise -1. */
   excursion: number
-  /** Seconds the current activity lasts. */
+  /** Seconds the current activity lasts. For two-player games, only time spent playing counts. */
   duration: number
+  /** Seconds spent at a two-player game waiting for a partner. */
+  alone: number
   /** Counts decisions, seeding the next pseudo-random choice. */
   plan: number
 }
@@ -110,7 +114,7 @@ export type MovementState = {
 export function createMovementState(plan: ActorPlan | Route): MovementState {
   const home = 'home' in plan ? plan.home : plan.points[0]
   return { stage: 'standing', position: [...home], facing: DESK_FACING, seated: 0,
-    walking: false, cursor: 0, waypoints: [], wait: 0, idleTime: 0, activity: null, excursion: -1, duration: 0, plan: 0 }
+    walking: false, cursor: 0, waypoints: [], wait: 0, idleTime: 0, activity: null, excursion: -1, duration: 0, alone: 0, plan: 0 }
 }
 
 /** Deterministic 0..1 noise, so a scene replays the same choices and tests stay stable. */
@@ -121,29 +125,63 @@ export function idleRandom(ordinal: number, plan: number, salt = 0): number {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296
 }
 
-const WEIGHTS: [IdleActivity, number][] = [['desk', 34], ['stretch', 9], ['phone', 12], ['coffee', 15], ['schedule', 12], ['tv', 18]]
+// Recreation (TV and the games room) gets the largest share of idle time.
+const WEIGHTS: [IdleActivity, number][] = [['desk', 18], ['stretch', 5], ['phone', 6], ['coffee', 8], ['schedule', 5], ['tv', 15], ['darts', 13], ['pingpong', 15], ['chess', 15]]
 const DURATION: Record<IdleActivity, [number, number]> = {
-  desk: [14, 30], stretch: [4.5, 6.5], phone: [7, 13], coffee: [5, 7], schedule: [5, 8], tv: [14, 26],
+  desk: [14, 30], stretch: [4.5, 6.5], phone: [7, 13], coffee: [5, 7], schedule: [5, 8], tv: [35, 70],
+  darts: [30, 55], pingpong: [45, 80], chess: [60, 110],
 }
+/** Games that need two players. Playing time only counts while both are there. */
+export const PAIRED: ReadonlySet<Excursion> = new Set(['pingpong', 'chess'])
+/** How long a lone player waits for a partner who is not on the way. */
+export const PARTNER_PATIENCE = 30
+/** Joining someone who is waiting for a game partner beats a random choice this often. */
+const JOIN_CHANCE = .75
 const pick = (ordinal: number, plan: number, salt: number, [low, high]: [number, number]) => low + idleRandom(ordinal, plan, salt) * (high - low)
 
-/** Access to shared spots and corridors, decided by the floor simulation. */
-export type MovementAccess = { depart?: (route: Route) => boolean; corridor?: boolean }
+/** A two-player game partner: settled and playing, walking over, or absent. */
+export type Partner = 'playing' | 'coming' | 'none'
+/**
+ * Access to shared spots and corridors, decided by the floor simulation.
+ * `partner` is the state of the opponent at this agent's game; `waiting` lists
+ * two-player games where someone sits alone waiting for an opponent.
+ */
+export type MovementAccess = { depart?: (route: Route) => boolean; corridor?: boolean; partner?: Partner; waiting?: ReadonlySet<Excursion> }
 
 /** Picks the next idle activity. Excursions only start when their spot and the corridor are free. */
-export function chooseIdleActivity(state: MovementState, plan: ActorPlan, ordinal: number, depart: (route: Route) => boolean): { activity: IdleActivity; excursion: number } {
+export function chooseIdleActivity(state: MovementState, plan: ActorPlan, ordinal: number, depart: (route: Route) => boolean,
+  waiting: ReadonlySet<Excursion> = new Set()): { activity: IdleActivity; excursion: number } {
+  // Someone is waiting for an opponent: usually go and join them.
+  const invites = plan.excursions.map((route, index) => ({ route, index })).filter(({ route }) => waiting.has(route.activity) && depart(route))
+  if (invites.length && idleRandom(ordinal, state.plan, 6) < JOIN_CHANCE) {
+    const { route, index } = invites[Math.floor(idleRandom(ordinal, state.plan, 7) * invites.length)]
+    return { activity: route.activity, excursion: index }
+  }
   const total = WEIGHTS.reduce((sum, [, weight]) => sum + weight, 0)
   let roll = idleRandom(ordinal, state.plan, 1) * total
   let activity: IdleActivity = 'desk'
   for (const [name, weight] of WEIGHTS) { if ((roll -= weight) < 0) { activity = name; break } }
   // Variety: avoid repeating the same away-from-desk activity twice in a row.
   if (activity !== 'desk' && activity === state.activity) activity = 'desk'
-  if (activity === 'coffee' || activity === 'schedule' || activity === 'tv') {
+  if (activity !== 'desk' && activity !== 'stretch' && activity !== 'phone') {
     const options = plan.excursions.map((route, index) => ({ route, index })).filter(({ route }) => route.activity === activity && depart(route))
     if (!options.length) return { activity: 'desk', excursion: -1 }
     return { activity, excursion: options[Math.floor(idleRandom(ordinal, state.plan, 2) * options.length)].index }
   }
   return { activity, excursion: -1 }
+}
+
+/**
+ * Advances the clock at a visit spot. Two-player games only count time while
+ * the partner plays. Alone, the agent waits (indefinitely while the partner is
+ * walking over, otherwise up to PARTNER_PATIENCE), and a game ends for both as
+ * soon as one player leaves.
+ */
+function spendVisit(next: MovementState, route: Route, step: number, partner: Partner) {
+  if (!PAIRED.has(route.activity) || partner === 'playing') { next.wait += step; next.alone = 0; return }
+  if (partner === 'coming' && next.wait === 0) return
+  next.alone += step
+  if (next.wait > 0 || next.alone >= PARTNER_PATIENCE) next.duration = Math.min(next.duration, next.wait)
 }
 
 // A task event changes the movement goal, not the avatar's coordinates.
@@ -237,7 +275,7 @@ export function advanceMovement(state: MovementState, plan: ActorPlan, dt: numbe
       next.idleTime += step * (motion === 'subtle' ? .45 : 1)
       // A short, staggered pause so a team does not move in lockstep.
       if (next.idleTime > 1.2 + (ordinal * 7 % 9) * .35) {
-        const choice = chooseIdleActivity(next, plan, ordinal, access.depart ?? (() => true))
+        const choice = chooseIdleActivity(next, plan, ordinal, access.depart ?? (() => true), access.waiting)
         next.idleTime = 0
         next.activity = choice.activity
         next.duration = pick(ordinal, next.plan, 4, DURATION[choice.activity])
@@ -251,6 +289,7 @@ export function advanceMovement(state: MovementState, plan: ActorPlan, dt: numbe
           next.stage = 'walking'
           next.excursion = choice.excursion
           next.cursor = 1
+          next.alone = 0
         } else next.stage = 'idling'
       }
     }
@@ -265,8 +304,9 @@ export function advanceMovement(state: MovementState, plan: ActorPlan, dt: numbe
   }
 
   // ---- At a service-wing spot. ----
+  const partner = access.partner ?? 'playing'
   if (route && (next.stage === 'resting' || next.stage === 'coffee' || next.stage === 'viewing')) {
-    next.wait += step
+    if (next.wait < next.duration) spendVisit(next, route, step, partner)
     next.facing = route.facing
     // Wait for the corridor to clear before heading back.
     if (next.wait < next.duration || !corridor) return next
@@ -276,8 +316,8 @@ export function advanceMovement(state: MovementState, plan: ActorPlan, dt: numbe
   if (route && next.stage === 'lounging') {
     const approach = route.points[route.breakIndex], seat = route.seat ?? approach
     next.facing = route.facing
+    if (next.wait < next.duration) spendVisit(next, route, step, partner)
     const staying = next.wait < next.duration || (!corridor && !active && !still)
-    if (staying) next.wait += step
     next.seated = Math.min(1, Math.max(0, next.seated + (staying ? 1 : -1) * step / SIT_SECONDS))
     const ease = next.seated * next.seated * (3 - 2 * next.seated)
     next.position = [approach[0] + (seat[0] - approach[0]) * ease, approach[1] + (seat[1] - approach[1]) * ease]
@@ -346,6 +386,7 @@ export function advanceMovement(state: MovementState, plan: ActorPlan, dt: numbe
     if (!returning && route && next.cursor === route.breakIndex + 1) {
       next.stage = route.breakStage
       next.wait = 0
+      next.alone = 0
       next.walking = false
       next.facing = route.facing
       if (next.duration <= 0) next.duration = pick(ordinal, next.plan, 5, DURATION[route.activity])

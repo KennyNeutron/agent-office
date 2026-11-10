@@ -18,6 +18,7 @@ import { useLanguage } from '../locales/i18n'
 import { phaseName, statusName } from '../components/taskDisplay'
 import { ScheduleBoard } from './ScheduleBoard'
 import { LoungeTV } from './LoungeTV'
+import { GamesRoom, PingPongBall } from './GamesRoom'
 import { BOARD_LABEL_HEIGHT, scheduleBoardPosition } from './scheduleBoardLayout'
 import type { IdlePose } from './avatarRig'
 import { resolveAgentPose, selectAgentTask, TERMINAL_POSE_MS, type AgentPose } from './agentBehavior'
@@ -182,7 +183,11 @@ function Workstation({ seat, simulation, selected, pose, active, onSelect, prefe
     walkRef.current = frame.walking ? 1 : 0
     seatedRef.current = frame.seated
     coffeeRef.current = frame.stage === 'coffee'
-    idleRef.current = frame.stage === 'browsing' ? 'browse' : frame.stage === 'lounging' ? 'lap' : frame.stage === 'viewing' ? 'look'
+    // Map the simulated activity to an ambient pose (presentation only).
+    const visit = frame.excursion >= 0 ? actor.plan.excursions[frame.excursion].activity : null
+    idleRef.current = frame.stage === 'browsing' ? 'browse'
+      : frame.stage === 'lounging' ? (visit === 'chess' ? 'chess' : 'lap')
+      : frame.stage === 'viewing' ? (visit === 'darts' ? 'darts' : visit === 'pingpong' ? 'pingpong' : 'look')
       : frame.stage === 'idling' && (frame.activity === 'stretch' || frame.activity === 'phone') ? frame.activity : null
     traveler.current.userData.idleActivity = frame.activity ?? ''
   }, -.75)
@@ -234,6 +239,8 @@ function Studio({ selected, tasks, schedules, onOpenSchedules, onSelect, now, ov
     <OfficeCrowdLOD seats={distantSeats} theme={preferences.theme} working={activeIds} simulation={simulation} onSelect={onSelect}/>
     {visibleSeats.map(seat => <Workstation key={seat.agent.id} seat={seat} simulation={simulation} active={activeIds.has(seat.agent.id)} selected={selected === seat.agent.id} pose={resolveAgentPose(selectAgentTask(tasks, seat.agent.id, now), now)} onSelect={() => onSelect(seat.agent.id)} preferences={preferences} avatars={avatars}/>)}
     <LoungeTV layout={layout} simulation={simulation}/>
+    <GamesRoom layout={layout} preferences={preferences}/>
+    <PingPongBall layout={layout} simulation={simulation}/>
     <ScheduleBoard layout={layout} schedules={schedules} agents={agents} accent={preferences.accent} onOpen={onOpenSchedules}/>
     <BadgeProjector overlayId={overlayId} seats={visibleSeats} sectors={layout.sectors} avatars={avatars} board={board}/>
     <OrthographicCamera key={`${cameraKey}-camera`} makeDefault position={[target[0] + 15, target[1] + 17, target[2] + 19]} zoom={overview ? overviewZoom : 42} near={.1} far={Math.max(250, layout.width + layout.depth + 100)} />

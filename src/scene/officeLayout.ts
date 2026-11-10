@@ -3,8 +3,11 @@ import type { OfficeSpacing } from './officePreferences'
 
 export type Seat = { agent: OfficeAgent; position: [number, number, number]; sector: Department; sectorKey: string; placement: 'lead' | 'team' }
 export type Sector = { id: Department; key: string; center: [number, number, number]; width: number; depth: number; count: number; row: number }
-export type OfficeAmenity = { id: 'meeting' | 'coffee' | 'focus' | 'reception'; key: string; x: number; z: number; aisleZ: number; row: number }
+export type OfficeAmenity = { id: 'meeting' | 'coffee' | 'focus' | 'reception' | 'games'; key: string; x: number; z: number; aisleZ: number; row: number }
 export type OfficeLayout = { sectors: Sector[]; seats: Seat[]; width: number; depth: number; spineX: number; passages: { x: number; z: number; width: number; depth: number }[]; amenities: OfficeAmenity[] }
+
+/** Depth of the games room strip added below the last row of team bays. */
+export const GAMES_ROOM_DEPTH = 6
 
 const DEPARTMENT_ORDER: Department[] = ['architecture', 'engineering', 'quality', 'design', 'research', 'data', 'security', 'operations', 'general']
 
@@ -53,7 +56,11 @@ export function makeOfficeLayout(agents: OfficeAgent[], spacing: OfficeSpacing =
       position: [x + (2.45 + ordinal % desksAcross * 3.75) * scale, 0, z + (2.15 + Math.floor(ordinal / desksAcross) * 4.4) * scale] }))
   })
   const width = Math.max(17.2 * scale, startX + columnWidths.reduce((sum, value) => sum + value, 0) + gap * (columns - 1) + 1.2 * scale)
-  const depth = rowStarts.at(-1)! + rowHeights.at(-1)! + gap
+  const workDepth = rowStarts.at(-1)! + rowHeights.at(-1)! + gap
+  // A games room (darts, table tennis, chess) runs along the south edge of the floor.
+  const games = agents.length > 0
+  const depth = workDepth + (games ? GAMES_ROOM_DEPTH : 0)
+  if (games) amenities.push({ id: 'games', key: 'games', x: spineX, z: workDepth, aisleZ: workDepth + .9, row: rowHeights.length })
   rowHeights.forEach((height, row) => {
     const aisleZ = rowStarts[row] + height + .55 * scale
     passages.push({ x: (startX + width) / 2, z: aisleZ + .4 * scale, width: width - startX + 1.2 * scale, depth: 1.7 * scale })
@@ -64,5 +71,6 @@ export function makeOfficeLayout(agents: OfficeAgent[], spacing: OfficeSpacing =
       z: row > 0 ? rowStarts[row] + 3.1 * scale : 10.1 * scale, aisleZ, row })
   })
   passages.push({ x: spineX, z: depth / 2, width: 2.2 * scale, depth: depth - 1.2 * scale })
+  if (games) passages.push({ x: width / 2, z: workDepth + .9, width: width - 1.2, depth: 1.4 })
   return { sectors, seats, width, depth, spineX, passages, amenities }
 }

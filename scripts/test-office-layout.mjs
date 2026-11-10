@@ -2,12 +2,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { makeOfficeLayout } from '../src/scene/officeLayout.ts'
 import { DEFAULT_AGENTS, makeAgent, validateAgent, validStoredAgents } from '../server/agents.mjs'
-import { advanceMovement, CHAIR_Z, CHAIR_APPROACH_Z, createMovementState, STAND_SIDE_X, STAND_Z, walkAt } from '../src/scene/officeMotion.ts'
+import { advanceMovement, CHAIR_Z, CHAIR_APPROACH_Z, createMovementState, PAIRED, PARTNER_PATIENCE, STAND_SIDE_X, STAND_Z, walkAt } from '../src/scene/officeMotion.ts'
 import { makeAvatarRigPose } from '../src/scene/avatarRig.ts'
 import { departmentDecor } from '../src/scene/officeDecor.ts'
 import { DEFAULT_OFFICE_PREFERENCES, normalizeOfficePreferences } from '../src/scene/officePreferences.ts'
-import { heldSpot, layoutGeometryKey, planForSeat, routeForSeat, reconcileOfficeSimulation, stepOfficeSimulation, tvWatched } from '../src/scene/officeSimulation.ts'
-import { boardSpots, COFFEE_TABLE, SOFA, tvSeats } from '../src/scene/loungeLayout.ts'
+import { heldSpot, layoutGeometryKey, partnerOf, planForSeat, routeForSeat, reconcileOfficeSimulation, stepOfficeSimulation, tvWatched } from '../src/scene/officeSimulation.ts'
+import { boardSpots, chessSeats, COFFEE_TABLE, dartsSpots, GAMES, gamesRoom, pingPongSpots, SOFA, tvSeats } from '../src/scene/loungeLayout.ts'
 
 const departments = ['architecture', 'engineering', 'design', 'quality', 'research', 'operations', 'security', 'data', 'general']
 
@@ -252,27 +252,71 @@ test('work transitions return along walkways, sit at the monitor and rise cohere
   assert.deepEqual(state.position, plan.home)
 })
 
+test('chess and table tennis need two players: a lone player waits, then both play and leave together', () => {
+  const layout = makeOfficeLayout(makeTeam(4))
+  const plan = planForSeat(layout, layout.seats[0], 0)
+  for (const activity of PAIRED) {
+    const excursion = plan.excursions.findIndex(route => route.activity === activity)
+    const route = plan.excursions[excursion]
+    const atSpot = () => ({ ...createMovementState(plan), stage: 'walking', excursion, cursor: 1, activity, duration: 40 })
+    const arrive = (partner) => {
+      let state = atSpot()
+      for (let i = 0; i < 4000 && state.stage !== route.breakStage; i++) state = advanceMovement(state, plan, .05, false, 'lively', 0, { partner })
+      assert.equal(state.stage, route.breakStage)
+      return state
+    }
+    const run = (state, seconds, partner) => {
+      for (let i = 0; i < seconds / .05; i++) state = advanceMovement(state, plan, .05, false, 'lively', 0, { partner })
+      return state
+    }
+    // Alone with an opponent on the way: keep waiting, no game time passes.
+    let state = run(arrive('coming'), PARTNER_PATIENCE + 10, 'coming')
+    assert.equal(state.stage, route.breakStage, `${activity}: waits while the opponent walks over`)
+    assert.equal(state.wait, 0)
+    // Alone with nobody coming: give up after PARTNER_PATIENCE.
+    state = run(arrive('none'), PARTNER_PATIENCE - 2, 'none')
+    assert.equal(state.stage, route.breakStage, `${activity}: waits a while for an opponent`)
+    state = run(state, 8, 'none')
+    assert.ok(state.stage === 'walking' || state.stage === 'returning' || state.stage === 'standing', `${activity}: leaves when nobody comes (${state.stage})`)
+    // Playing: time counts; when the opponent leaves, the game is over.
+    state = run(arrive('playing'), 10, 'playing')
+    assert.ok(state.wait > 9 && state.stage === route.breakStage, `${activity}: plays while the opponent is there`)
+    state = run(state, 3, 'none')
+    assert.notEqual(state.stage, route.breakStage, `${activity}: leaves once the opponent has gone`)
+  }
+  // Someone waiting at a game: idle agents usually go to join them.
+  const state = createMovementState(plan)
+  let joined = 0
+  for (let n = 0; n < 200; n++) {
+    let next = { ...state, plan: n }
+    for (let i = 0; i < 100 && next.stage === 'standing'; i++) next = advanceMovement(next, plan, .05, false, 'lively', 0, { waiting: new Set(['chess']) })
+    if (next.stage === 'walking' && plan.excursions[next.excursion].activity === 'chess') joined++
+  }
+  assert.ok(joined > 120, `idle agents should usually join a waiting chess player (${joined}/200)`)
+})
+
 test('idle agents rotate through ambient activities without claiming a conversation or real work', () => {
   const layout = makeOfficeLayout(makeTeam(4))
   const seat = layout.seats[0]
   const plan = planForSeat(layout, seat, 0)
   let state = createMovementState(plan)
   const seen = new Set()
-  for (let i = 0; i < 40000; i++) {
+  for (let i = 0; i < 80000; i++) {
     state = advanceMovement(state, plan, .05, false, 'lively', 0)
     assert.notEqual(state.stage, 'chatting', 'idle movement must not enter a conversation stage')
     assert.notEqual(state.stage, 'working', 'idle agents must never appear to work on a task')
     if (state.stage === 'browsing') seen.add('desk')
     if (state.stage === 'idling') seen.add(state.activity)
     if (state.stage === 'coffee') seen.add('coffee')
-    if (state.stage === 'viewing') seen.add('schedule')
-    if (state.stage === 'lounging' && state.seated === 1) seen.add('tv')
+    const visit = state.excursion >= 0 ? plan.excursions[state.excursion].activity : null
+    if (state.stage === 'viewing') seen.add(visit)
+    if (state.stage === 'lounging' && state.seated === 1) seen.add(visit)
     if (state.stage === 'lounging') {
       const route = plan.excursions[state.excursion]
-      assert.ok(Math.hypot(state.position[0] - route.points[route.breakIndex][0], state.position[1] - route.points[route.breakIndex][1]) <= SOFA.approach + 1e-6, 'sofa sitting stays between the stand point and the seat')
+      assert.ok(Math.hypot(state.position[0] - route.points[route.breakIndex][0], state.position[1] - route.points[route.breakIndex][1]) <= Math.max(SOFA.approach, .38) + 1e-6, 'seated visits stay between the stand point and the seat')
     }
   }
-  assert.deepEqual([...seen].sort(), ['coffee', 'desk', 'phone', 'schedule', 'stretch', 'tv'])
+  assert.deepEqual([...seen].sort(), ['chess', 'coffee', 'darts', 'desk', 'phone', 'pingpong', 'schedule', 'stretch', 'tv'])
   const sipping = makeAvatarRigPose(0, false, 2, 'idle', 0, 0, 1)
   assert.ok(sipping.arms[1].wrist[1] > 1.3, 'coffee break should lift the mug toward the face')
   // Without a lounge (fewer than three agents) there is no TV, and nobody tries to reach one.
@@ -373,10 +417,11 @@ test('simultaneous idle routines share spots one at a time, keep distance and re
   const layout = makeOfficeLayout(makeTeam(20))
   const simulation = reconcileOfficeSimulation(layout)
   const ids = new Set(layout.seats.map(seat => seat.agent.id))
-  const visitors = new Set(), activities = new Set()
-  let tvOn = false
-  // Ten simulated minutes: trips are one walker at a time, so a busy floor needs a while to show every kind.
-  for (let i = 0; i < 12000; i++) {
+  const visitors = new Set(), activities = new Set(), games = new Set()
+  let tvOn = false, pairs = 0
+  const solo = new Map()
+  // Twenty simulated minutes: trips are one walker at a time and recreation lasts a while, so a busy floor needs time to show every kind.
+  for (let i = 0; i < 24000; i++) {
     stepOfficeSimulation(simulation, ids, new Set(), .05, 'lively')
     const spots = new Set()
     let walkers = 0
@@ -387,7 +432,19 @@ test('simultaneous idle routines share spots one at a time, keep distance and re
         spots.add(spot)
       }
       if (['walking', 'returning'].includes(actor.state.stage) && actor.state.excursion >= 0) walkers++
-      if (['coffee', 'viewing', 'lounging'].includes(actor.state.stage)) { visitors.add(id); activities.add(actor.state.stage) }
+      if (['coffee', 'viewing', 'lounging'].includes(actor.state.stage)) {
+        visitors.add(id); activities.add(actor.state.stage)
+        const visit = actor.plan.excursions[actor.state.excursion].activity
+        if (['darts', 'pingpong', 'chess'].includes(visit)) games.add(visit)
+        // Two-player games only advance while the opponent is there too.
+        if (PAIRED.has(visit) && actor.state.wait > 0 && actor.state.wait < actor.state.duration) {
+          // The game ends for both within a frame of one player leaving.
+          const partner = partnerOf(simulation, actor)
+          solo.set(id, partner === 'none' ? (solo.get(id) ?? 0) + 1 : 0)
+          assert.ok(solo.get(id) <= 1, `${visit} played without an opponent`)
+          if (partner === 'playing') pairs++
+        }
+      }
       if (actor.state.stage === 'idling') activities.add(actor.state.activity)
       for (const [otherId, other] of simulation) if (otherId !== id) {
         assert.ok(Math.hypot(actor.state.position[0] - other.state.position[0], actor.state.position[1] - other.state.position[1]) >= .72 - 1e-8, 'characters overlap during simultaneous movement')
@@ -398,6 +455,8 @@ test('simultaneous idle routines share spots one at a time, keep distance and re
   }
   assert.ok(visitors.size >= 4, 'different agents should take turns leaving their desks')
   for (const activity of ['coffee', 'viewing', 'lounging', 'stretch', 'phone']) assert.ok(activities.has(activity), `${activity} should occur on a busy floor`)
+  assert.ok(games.size >= 2, `the games room should be used (saw ${[...games]})`)
+  assert.ok(pairs > 0, 'chess or table tennis should be played by two agents together')
   assert.equal(tvOn, true, 'the TV switches on while someone watches')
   for (let i = 0; i < 2400; i++) stepOfficeSimulation(simulation, ids, ids, .05, 'lively')
   assert.ok([...simulation.values()].every(actor => actor.state.stage === 'working'), 'new tasks must interrupt visits and return everyone to their desk')
@@ -414,6 +473,20 @@ test('service-wing visit routes stay clear of desks, chairs, the lounge furnitur
       { name: 'coffee table', x: lounge.x + COFFEE_TABLE.offsetX, z: lounge.z, w: COFFEE_TABLE.width, d: COFFEE_TABLE.depth },
       { name: 'reception desk', x: reception.x, z: reception.z, w: 3.5, d: .95 },
     ]
+    const room = gamesRoom(layout)
+    blockers.push(
+      { name: 'dart partition', x: room.dartsBoardX - .06, z: room.rowZ, w: .12, d: 1.8 },
+      { name: 'table tennis table', x: room.tableX, z: room.rowZ, w: GAMES.table.length, d: GAMES.table.width },
+      { name: 'chess table', x: room.chessX, z: room.rowZ, w: GAMES.chessTable.size, d: GAMES.chessTable.size },
+      ...[-1, 1].map(side => ({ name: 'chess chair', x: room.chessX + side * GAMES.chessSeat, z: room.rowZ, w: .78, d: .78 })),
+    )
+    const [eastPlayer] = pingPongSpots(layout).map(spot => spot.point).slice(-1)
+    assert.ok(room.chessX - GAMES.chessSeat - .39 - eastPlayer[0] > .45, `table tennis player too close to the chess chairs (${count}/${spacing})`)
+    // The games room fits inside the floor, clear of the last row of desks and of the corridor.
+    assert.ok(room.z > Math.max(...layout.seats.map(seat => seat.position[2])) + 2, `games room overlaps desks (${count}/${spacing})`)
+    assert.ok(room.chessX + GAMES.chessSeat + .5 < layout.width && room.tableX - GAMES.table.length / 2 - GAMES.playerGap > layout.spineX + .7, `games furniture does not fit (${count}/${spacing})`)
+    const players = [...dartsSpots(layout), ...pingPongSpots(layout), ...chessSeats(layout)].map(spot => spot.point)
+    for (let i = 0; i < players.length; i++) for (let j = i + 1; j < players.length; j++) assert.ok(Math.hypot(players[i][0] - players[j][0], players[i][1] - players[j][1]) > 1.2)
     layout.seats.forEach((seat, ordinal) => {
       for (const route of planForSeat(layout, seat, ordinal).excursions.filter(item => item.activity !== 'coffee')) {
         for (let segment = 0; segment < route.points.length - 1; segment++) {
@@ -425,7 +498,8 @@ test('service-wing visit routes stay clear of desks, chairs, the lounge furnitur
             // The stand point right in front of a sofa seat is meant to be close to the sofa, never inside it.
             const stand = route.points[route.breakIndex]
             const margin = Math.hypot(px - stand[0], pz - stand[1]) < .5 ? 0 : .3
-            for (const b of blockers) assert.ok(!(Math.abs(px - b.x) < b.w / 2 + margin && Math.abs(pz - b.z) < b.d / 2 + margin), `${route.spot} walks through the ${b.name} (${count}/${spacing})`)
+            // Like desk chairs, the rolling chess chairs may be brushed while stepping in front of them.
+            for (const b of blockers) if (!(route.activity === 'chess' && b.name === 'chess chair')) assert.ok(!(Math.abs(px - b.x) < b.w / 2 + margin && Math.abs(pz - b.z) < b.d / 2 + margin), `${route.spot} walks through the ${b.name} (${count}/${spacing})`)
             for (const other of layout.seats) {
               const dx = Math.abs(px - other.position[0]), dz = pz - other.position[2]
               assert.ok(!(dx < 1.35 && dz > -.98 && dz < .55), `desk collision on ${route.spot} at ${count}/${spacing}`)
@@ -445,7 +519,7 @@ test('service-wing visit routes stay clear of desks, chairs, the lounge furnitur
 
 test('idle poses keep limbs connected at natural lengths', () => {
   const length = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
-  const poses = [[1, 'browse'], [1, 'lap'], [0, 'stretch'], [0, 'phone'], [0, 'look']]
+  const poses = [[1, 'browse'], [1, 'lap'], [0, 'stretch'], [0, 'phone'], [0, 'look'], [0, 'darts'], [0, 'pingpong'], [1, 'chess']]
   // Every blend amount and moment of the stretch cycle, not only the finished poses.
   for (const [seated, name] of poses) for (const amount of [.15, .35, .5, .75, 1]) for (const t of [0, .4, .9, 1.3, 1.8, 2.5, 3.2, 4.1]) {
     const idle = { [name]: amount }
@@ -454,7 +528,8 @@ test('idle poses keep limbs connected at natural lengths', () => {
       for (const arm of rig.arms) {
         // Same range as the existing working poses (seated upper arm .54, standing forearm .28).
         assert.ok(length(arm.shoulder, arm.elbow) > .28 && length(arm.shoulder, arm.elbow) < .56, `upper arm stretched in ${JSON.stringify(idle)}`)
-        assert.ok(length(arm.elbow, arm.wrist) > .25 && length(arm.elbow, arm.wrist) < .46, `forearm stretched in ${JSON.stringify(idle)}`)
+        // Chess pondering reuses the task 'thinking' hand-to-chin pose, whose forearm reaches .61.
+        assert.ok(length(arm.elbow, arm.wrist) > .25 && length(arm.elbow, arm.wrist) < (name === 'chess' ? .62 : .46), `forearm stretched in ${JSON.stringify(idle)}`)
       }
     }
   }

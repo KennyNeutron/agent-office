@@ -49,3 +49,60 @@ export function boardSpots(layout: OfficeLayout): VisitSpot[] {
     return { key: `board-${index}`, point, facing, approach: point, lane: [[layout.spineX, point[1]], point] }
   })
 }
+
+// ---- Games room (south strip): darts, table tennis and chess. ----
+/** Distances inside the games room, measured from its north edge (amenity z) and the floor's west edge. */
+export const GAMES = {
+  laneZ: .9, // walking lane along the strip
+  rowZ: 2.9, // centre line shared by the dartboard, table and chess table
+  dartsBoardX: .62, // partition with the board, facing east
+  dartsThrow: 2.6, // throw line distance from the board
+  tableOffset: 2.97, // table tennis centre, east of the corridor (west player 1 m from it)
+  table: { length: 2.74, width: 1.525, height: .76 },
+  playerGap: .6, // player stands this far beyond each end of the table
+  chessFromEast: 2.1, // chess table centre, from the east edge of the floor
+  chessSeat: 1.3, // chair distance from the chess table centre; the stand point clears the table by .42 m
+  chessTable: { size: 1.0, height: 1.03 }, // top matches the desks, so seated hands rest on its edge
+}
+
+export type GamesRoom = { z: number; laneZ: number; rowZ: number; dartsBoardX: number; tableX: number; chessX: number }
+export function gamesRoom(layout: OfficeLayout): GamesRoom | null {
+  const room = layout.amenities.find(item => item.id === 'games')
+  if (!room) return null
+  return { z: room.z, laneZ: room.z + GAMES.laneZ, rowZ: room.z + GAMES.rowZ, dartsBoardX: GAMES.dartsBoardX,
+    tableX: layout.spineX + GAMES.tableOffset, chessX: layout.width - GAMES.chessFromEast }
+}
+
+const FACING_EAST = Math.PI / 2
+const laneTo = (layout: OfficeLayout, room: GamesRoom, approach: Point): Point[] =>
+  [[layout.spineX, room.laneZ], [approach[0], room.laneZ], approach]
+
+/** Throw line in front of the dartboard. */
+export function dartsSpots(layout: OfficeLayout): VisitSpot[] {
+  const room = gamesRoom(layout)
+  if (!room) return []
+  const point: Point = [room.dartsBoardX + GAMES.dartsThrow, room.rowZ]
+  return [{ key: 'darts-0', point, facing: FACING_WEST, approach: point, lane: laneTo(layout, room, point) }]
+}
+
+/** One player at each end of the table tennis table, facing each other. */
+export function pingPongSpots(layout: OfficeLayout): VisitSpot[] {
+  const room = gamesRoom(layout)
+  if (!room) return []
+  const reach = GAMES.table.length / 2 + GAMES.playerGap
+  return [-1, 1].map((side, index) => {
+    const point: Point = [room.tableX + side * reach, room.rowZ]
+    return { key: `pingpong-${index}`, point, facing: side < 0 ? FACING_EAST : FACING_WEST, approach: point, lane: laneTo(layout, room, point) }
+  })
+}
+
+/** Two chairs facing each other across the chess table. Agents stand in front of a chair, then sit back into it. */
+export function chessSeats(layout: OfficeLayout): VisitSpot[] {
+  const room = gamesRoom(layout)
+  if (!room) return []
+  return [-1, 1].map((side, index) => {
+    const point: Point = [room.chessX + side * GAMES.chessSeat, room.rowZ]
+    const approach: Point = [room.chessX + side * (GAMES.chessSeat - .38), room.rowZ]
+    return { key: `chess-${index}`, point, facing: side < 0 ? FACING_EAST : FACING_WEST, approach, lane: laneTo(layout, room, approach) }
+  })
+}
