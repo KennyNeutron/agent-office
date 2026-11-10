@@ -15,7 +15,11 @@ export type AvatarRigPose = {
 }
 
 /** Blend amounts (0..1) for ambient idle poses. Presentation only, never task state. */
-export type IdleBlend = { browse?: number; lap?: number; stretch?: number; phone?: number; look?: number; darts?: number; pingpong?: number; chess?: number }
+export type IdleBlend = { browse?: number; lap?: number; stretch?: number; phone?: number; look?: number; darts?: number; pingpong?: number; chess?: number
+  /** Lying asleep on the nap couch: hands folded on the belly (the body is laid down by the avatar). */
+  sleep?: number
+  /** Patting a visiting pet: lean in and reach down with the right hand. */
+  pet?: number }
 export type IdlePose = keyof IdleBlend
 
 const mix = (a: RigPoint, b: RigPoint, amount: number): RigPoint =>
@@ -92,6 +96,7 @@ export function makeAvatarRigPose(seatedInput: number, walking: boolean | number
   const stretch = clamp01(idle.stretch) * standing * stretchCycle * stretchCycle * (3 - 2 * stretchCycle)
   const phone = clamp01(idle.phone) * standing, look = clamp01(idle.look) * standing
   const darts = clamp01(idle.darts) * standing, pingpong = clamp01(idle.pingpong) * standing
+  const sleep = clamp01(idle.sleep) * (1 - seated) * (1 - stride), pet = clamp01(idle.pet) * standing
   arms.forEach((arm, index) => {
     const side = index === 0 ? -1 : 1
     if (browse) {
@@ -124,6 +129,14 @@ export function makeAvatarRigPose(seatedInput: number, walking: boolean | number
       if (side === 1) blendArm(arm, [.44, 1.34, .2], [.3 + swing * .17, 1.27 + Math.abs(swing) * .05, .46], pingpong)
       else blendArm(arm, [-.43, 1.33, .12], [-.33, 1.22, .4], pingpong)
     }
+    // Elbows stay close to the body so the arms fit within the couch cushion.
+    if (sleep) blendArm(arm, [side * .4, 1.26, .16], [side * .12, 1.14, .3], sleep)
+    if (pet && side === 1) {
+      // Pat the pet's head: the hand rises and falls a little, low and in front.
+      const pat = Math.max(0, Math.sin(seconds * 5.2)) * .06
+      blendArm(arm, [.43, 1.3, .28], [.26, .95 + pat, .5], pet)
+    }
+    if (pet && side === -1) blendArm(arm, [-.43, 1.3, .1], [-.36, 1.08, .24], pet * .6)
     if (look && side === 1) {
       // Hand to the chin while reading the schedule.
       blendArm(arm, [.38, 1.24, .19], [.12, 1.5, .28], look)

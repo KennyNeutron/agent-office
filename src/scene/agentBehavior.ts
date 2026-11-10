@@ -17,6 +17,17 @@ export function resolveAgentPose(task?: OfficeTask, now = Date.now()): AgentPose
   return 'idle'
 }
 
+/** Poses that show an agent actively working a task (as opposed to reacting to its result). */
+export const WORK_POSES: ReadonlySet<AgentPose> = new Set(['thinking', 'coding', 'researching', 'finishing'])
+/**
+ * What the avatar shows. Work only appears once the agent is seated at its own
+ * desk; until then a running task's agent just walks back (presentation only,
+ * the real CLI task is already running).
+ */
+export function presentedPose(pose: AgentPose, atDesk: boolean): AgentPose {
+  return !atDesk && WORK_POSES.has(pose) ? 'idle' : pose
+}
+
 // Active work outranks a terminal reaction from the preceding task. Otherwise
 // a fresh task could appear idle/failed while the backend is actually running.
 export function selectAgentTask(tasks: OfficeTask[], agentId: AgentId, now = Date.now()): OfficeTask | undefined {

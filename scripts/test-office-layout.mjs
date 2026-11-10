@@ -7,9 +7,13 @@ import { makeAvatarRigPose } from '../src/scene/avatarRig.ts'
 import { departmentDecor } from '../src/scene/officeDecor.ts'
 import { DEFAULT_OFFICE_PREFERENCES, normalizeOfficePreferences } from '../src/scene/officePreferences.ts'
 import { heldSpot, layoutGeometryKey, partnerOf, planForSeat, routeForSeat, reconcileOfficeSimulation, stepOfficeSimulation, tvWatched } from '../src/scene/officeSimulation.ts'
-import { boardSpots, chessSeats, COFFEE_TABLE, dartsSpots, GAMES, gamesRoom, pingPongSpots, SOFA, tvSeats } from '../src/scene/loungeLayout.ts'
+import { boardSpots, chessSeats, COFFEE_TABLE, dartsSpots, GAMES, gamesRoom, NAP_COUCH, napCouch, napSpots, pingPongSpots, PET_BEDS, petGeometry, SOFA, tvSeats } from '../src/scene/loungeLayout.ts'
+import { createOfficePets, GREET_OFFSET, pathToAgent, pathToNap, petVisits, stepOfficePets } from '../src/scene/petSimulation.ts'
+import { isSleeping } from '../src/scene/officeSimulation.ts'
+import { PET_FACING } from '../src/scene/officeMotion.ts'
 import { activeReaders, HOLOGRAM_RADIUS, isKnowledgeEvent, KNOWLEDGE_RADIUS, KNOWLEDGE_RECENT_MS, knowledgeGeometry, knowledgeGraphPosition, knowledgeReaders } from '../src/scene/knowledgeGraphLayout.ts'
 import { RECEPTION_PROPS } from '../src/scene/timepieceLayout.ts'
+import { presentedPose, WORK_POSES } from '../src/scene/agentBehavior.ts'
 
 const departments = ['architecture', 'engineering', 'design', 'quality', 'research', 'operations', 'security', 'data', 'general']
 
@@ -315,10 +319,13 @@ test('idle agents rotate through ambient activities without claiming a conversat
     if (state.stage === 'lounging' && state.seated === 1) seen.add(visit)
     if (state.stage === 'lounging') {
       const route = plan.excursions[state.excursion]
-      assert.ok(Math.hypot(state.position[0] - route.points[route.breakIndex][0], state.position[1] - route.points[route.breakIndex][1]) <= Math.max(SOFA.approach, .38) + 1e-6, 'seated visits stay between the stand point and the seat')
+      // The nap couch is deeper than a chair: the agent lies down from its stand point in front of it.
+      const reach = route.activity === 'nap' ? NAP_COUCH.depth / 2 + NAP_COUCH.approach : Math.max(SOFA.approach, .38)
+      assert.ok(Math.hypot(state.position[0] - route.points[route.breakIndex][0], state.position[1] - route.points[route.breakIndex][1]) <= reach + 1e-6, 'seated visits stay between the stand point and the seat')
     }
   }
-  assert.deepEqual([...seen].sort(), ['chess', 'coffee', 'darts', 'desk', 'phone', 'pingpong', 'schedule', 'stretch', 'tv'])
+  // 'pet' only happens when a pet visits, which this single-agent run has none of.
+  assert.deepEqual([...seen].sort(), ['chess', 'coffee', 'darts', 'desk', 'nap', 'phone', 'pingpong', 'schedule', 'stretch', 'tv'])
   const sipping = makeAvatarRigPose(0, false, 2, 'idle', 0, 0, 1)
   assert.ok(sipping.arms[1].wrist[1] > 1.3, 'coffee break should lift the mug toward the face')
   // Without a lounge (fewer than three agents) there is no TV, and nobody tries to reach one.
@@ -481,6 +488,8 @@ test('service-wing visit routes stay clear of desks, chairs, the lounge furnitur
       { name: 'table tennis table', x: room.tableX, z: room.rowZ, w: GAMES.table.length, d: GAMES.table.width },
       { name: 'chess table', x: room.chessX, z: room.rowZ, w: GAMES.chessTable.size, d: GAMES.chessTable.size },
       ...[-1, 1].map(side => ({ name: 'chess chair', x: room.chessX + side * GAMES.chessSeat, z: room.rowZ, w: .78, d: .78 })),
+      { name: 'nap couch', x: napCouch(layout).x, z: napCouch(layout).z, w: NAP_COUCH.length, d: NAP_COUCH.depth },
+      ...Object.entries(petGeometry(layout).beds).map(([kind, [x, z]]) => ({ name: `${kind} bed`, x, z, w: kind === 'dog' ? 1.4 : .8, d: 1.1 })),
     )
     const [eastPlayer] = pingPongSpots(layout).map(spot => spot.point).slice(-1)
     assert.ok(room.chessX - GAMES.chessSeat - .39 - eastPlayer[0] > .45, `table tennis player too close to the chess chairs (${count}/${spacing})`)
@@ -521,7 +530,7 @@ test('service-wing visit routes stay clear of desks, chairs, the lounge furnitur
 
 test('idle poses keep limbs connected at natural lengths', () => {
   const length = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
-  const poses = [[1, 'browse'], [1, 'lap'], [0, 'stretch'], [0, 'phone'], [0, 'look'], [0, 'darts'], [0, 'pingpong'], [1, 'chess']]
+  const poses = [[1, 'browse'], [1, 'lap'], [0, 'stretch'], [0, 'phone'], [0, 'look'], [0, 'darts'], [0, 'pingpong'], [1, 'chess'], [0, 'sleep'], [0, 'pet']]
   // Every blend amount and moment of the stretch cycle, not only the finished poses.
   for (const [seated, name] of poses) for (const amount of [.15, .35, .5, .75, 1]) for (const t of [0, .4, .9, 1.3, 1.8, 2.5, 3.2, 4.1]) {
     const idle = { [name]: amount }
@@ -672,4 +681,176 @@ test('knowledge graph lights up only for running tasks that recently queried gra
   assert.equal(nodes.length, 18)
   assert.ok(nodes.every(node => Math.hypot(...node) <= HOLOGRAM_RADIUS + 1e-9), 'nodes stay inside the hologram radius')
   assert.ok(edges.length >= nodes.length && edges.every(([a, b]) => a < b && b < nodes.length))
+})
+
+test('work poses only show once the agent is seated at its own desk', () => {
+  for (const pose of WORK_POSES) {
+    assert.equal(presentedPose(pose, false), 'idle', `${pose} must not show away from the desk`)
+    assert.equal(presentedPose(pose, true), pose)
+  }
+  // Results of a finished task are shown wherever the agent is.
+  for (const pose of ['celebrating', 'error', 'idle']) assert.equal(presentedPose(pose, false), pose)
+})
+
+test('an agent away from the desk walks back and sits before it is shown working', () => {
+  for (const motion of ['lively', 'subtle', 'off']) {
+    const layout = makeOfficeLayout(DEFAULT_AGENTS)
+    const ids = new Set(layout.seats.map(seat => seat.agent.id))
+    const simulation = reconcileOfficeSimulation(layout)
+    // Let the floor play (always lively) until someone is away from the desk on a visit.
+    const away = () => [...simulation].find(([, actor]) => actor.state.excursion >= 0 && ['coffee', 'viewing', 'lounging'].includes(actor.state.stage))
+    for (let i = 0; i < 24000 && !away(); i++) stepOfficeSimulation(simulation, ids, new Set(), .05, 'lively')
+    const [id, actor] = away() ?? []
+    assert.ok(id, 'an agent should leave the desk for a visit')
+    const start = [...actor.state.position]
+    const seat = layout.seats.find(item => item.agent.id === id)
+    const stages = []
+    let shownAwayFromDesk = 0
+    for (let i = 0; i < 4000; i++) {
+      stepOfficeSimulation(simulation, ids, new Set([id]), .05, motion)
+      const state = simulation.get(id).state
+      stages.push(state.stage)
+      const atDesk = state.stage === 'working'
+      if (presentedPose('coding', atDesk) !== 'idle' && state.seated < 1) shownAwayFromDesk++
+      if (atDesk) break
+    }
+    const state = simulation.get(id).state
+    assert.equal(state.stage, 'working', `${motion}: the agent must reach the desk (stages: ${[...new Set(stages)]})`)
+    assert.equal(state.seated, 1, `${motion}: working means fully seated`)
+    assert.ok(Math.hypot(state.position[0] - seat.position[0], state.position[1] - (seat.position[2] + CHAIR_Z)) < 1e-6, `${motion}: seated in the agent's own chair`)
+    assert.equal(shownAwayFromDesk, 0, `${motion}: work was shown before sitting down`)
+    if (motion !== 'off') {
+      assert.ok(stages.includes('returning') && stages.includes('sitting'), `${motion}: walks back and sits down (stages: ${[...new Set(stages)]})`)
+      assert.ok(Math.hypot(start[0] - state.position[0], start[1] - state.position[1]) > 2, `${motion}: the visit was away from the desk`)
+    }
+  }
+})
+
+/** Furniture in the service wing and games room, as footprints, for the nap couch and pet checks. */
+function wingFurniture(layout) {
+  const room = gamesRoom(layout), couch = napCouch(layout), lounge = layout.amenities.find(item => item.id === 'meeting')
+  return [
+    ...(lounge ? [{ name: 'sofa', x: lounge.x + SOFA.offsetX + .02, z: lounge.z, w: SOFA.depth + .08, d: SOFA.length + .3 },
+      { name: 'coffee table', x: lounge.x + COFFEE_TABLE.offsetX, z: lounge.z, w: COFFEE_TABLE.width, d: COFFEE_TABLE.depth }] : []),
+    { name: 'dart partition', x: room.dartsBoardX - .06, z: room.rowZ, w: .12, d: 1.8 },
+    { name: 'table tennis table', x: room.tableX, z: room.rowZ, w: GAMES.table.length, d: GAMES.table.width },
+    { name: 'chess table', x: room.chessX, z: room.rowZ, w: GAMES.chessTable.size, d: GAMES.chessTable.size },
+    ...[-1, 1].map(side => ({ name: 'chess chair', x: room.chessX + side * GAMES.chessSeat, z: room.rowZ, w: .78, d: .78 })),
+    { name: 'nap couch', x: couch.x, z: couch.z, w: NAP_COUCH.length, d: NAP_COUCH.depth },
+    { name: 'west planter', x: .65, z: layout.depth - .65, w: .7, d: .7 }, { name: 'east planter', x: layout.width - .65, z: layout.depth - .65, w: .7, d: .7 },
+  ]
+}
+const inside = (px, pz, b, margin) => Math.abs(px - b.x) < b.w / 2 + margin && Math.abs(pz - b.z) < b.d / 2 + margin
+function samples(points, each) {
+  for (let i = 0; i < points.length - 1; i++) for (let k = 0; k <= 24; k++) {
+    const t = k / 24
+    each(points[i][0] + (points[i + 1][0] - points[i][0]) * t, points[i][1] + (points[i + 1][1] - points[i][1]) * t)
+  }
+}
+
+test('nap couch and pet beds fit the games room clear of its games, players and the corridor', () => {
+  for (const count of [1, 3, 4, 20, 60]) for (const spacing of ['compact', 'regular', 'spacious']) {
+    const layout = makeOfficeLayout(makeTeam(count), spacing)
+    const room = gamesRoom(layout), couch = napCouch(layout), pets = petGeometry(layout)
+    const where = `(${count}/${spacing})`
+    // Inside the floor and the games room's south strip, west of the corridor.
+    assert.ok(couch.x - NAP_COUCH.length / 2 > .65 + .35 + .3 && couch.x + NAP_COUCH.length / 2 < layout.spineX - 1.1 - .3, `nap couch crowds the corridor or the west wall ${where}`)
+    assert.ok(couch.z + NAP_COUCH.depth / 2 < layout.depth - .2 && couch.z - NAP_COUCH.depth / 2 > room.rowZ + 1.7, `nap couch leaves the south strip ${where}`)
+    const players = [...dartsSpots(layout), ...pingPongSpots(layout), ...chessSeats(layout)].map(spot => spot.point)
+    const games = wingFurniture(layout).filter(item => !['nap couch', 'sofa', 'coffee table'].includes(item.name))
+    for (const b of [{ x: couch.x, z: couch.z, w: NAP_COUCH.length, d: NAP_COUCH.depth }, ...Object.values(pets.beds).map(([x, z]) => ({ x, z, w: 1.1, d: 1.1 }))]) {
+      for (const other of games) assert.ok(!(Math.abs(b.x - other.x) < (b.w + other.w) / 2 + .3 && Math.abs(b.z - other.z) < (b.d + other.d) / 2 + .3), `${other.name} too close to the nap couch or a pet bed ${where}`)
+      for (const [px, pz] of players) assert.ok(!inside(px, pz, b, .6), `a player stands in the nap couch or a pet bed ${where}`)
+    }
+    for (const [x] of Object.values(pets.beds)) assert.ok(x - .55 > layout.spineX + 1.1 && x + .55 < layout.width - 1.1, `pet bed outside the east strip ${where}`)
+    // The lying body (shoes to crown, 2.25 m) stays between the armrests.
+    const [spot] = napSpots(layout)
+    const inner = NAP_COUCH.length / 2 - NAP_COUCH.armrest
+    assert.ok(spot.point[0] + .14 < couch.x + inner && spot.point[0] - 2.25 > couch.x - inner - .03, `the napping body does not fit the couch ${where}`)
+  }
+})
+
+test('pet paths stay on walkways: clear of desks, chairs and service-wing furniture', () => {
+  for (const count of [1, 3, 4, 20, 60]) for (const spacing of ['compact', 'regular', 'spacious']) {
+    const layout = makeOfficeLayout(makeTeam(count), spacing)
+    const simulation = reconcileOfficeSimulation(layout)
+    const pets = createOfficePets(layout)
+    const furniture = wingFurniture(layout)
+    const where = `(${count}/${spacing})`
+    const check = (points, label) => samples(points, (px, pz) => {
+      assert.ok(px > .2 && px < layout.width - .2 && pz > .2 && pz < layout.depth - .2, `${label} leaves the floor ${where}`)
+      for (const b of furniture) assert.ok(!inside(px, pz, b, .2), `${label} walks through the ${b.name} ${where}`)
+      for (const other of layout.seats) {
+        const dx = Math.abs(px - other.position[0]), dz = pz - other.position[2]
+        assert.ok(!(dx < 1.35 && dz > -.98 && dz < .55), `${label} walks through a desk ${where}`)
+        assert.ok(!(dx < .55 && dz > .65 && dz < 1.67), `${label} walks through a chair ${where}`)
+      }
+    })
+    for (const pet of pets) {
+      for (const seat of layout.seats) check(pathToAgent(layout, simulation, pet, seat.agent.id), `${pet.kind} → ${seat.agent.id}`)
+      check(pathToNap(layout, pet), `${pet.kind} → nap couch`)
+    }
+    // A visiting pet waits beside the agent, close enough to pet but not in its personal space.
+    const home = simulation.get(layout.seats[0].agent.id).plan.home
+    const distance = Math.hypot(...GREET_OFFSET)
+    assert.ok(distance > .6 && distance < .75, 'greet point should be within reach of the agent')
+    assert.ok(home, 'agent home exists')
+  }
+})
+
+test('agents nap on the couch, and a task wakes them and sends them back to the desk', () => {
+  const layout = makeOfficeLayout(DEFAULT_AGENTS)
+  const ids = new Set(layout.seats.map(seat => seat.agent.id))
+  const simulation = reconcileOfficeSimulation(layout)
+  let sleeper = null, napped = 0
+  for (let i = 0; i < 36000 && !sleeper; i++) {
+    stepOfficeSimulation(simulation, ids, new Set(), .05, 'lively')
+    const asleep = [...simulation].filter(([, actor]) => isSleeping(actor))
+    assert.ok(asleep.length <= 1, 'the nap couch holds one agent at a time')
+    if (asleep.length && ++napped > 200) sleeper = asleep[0][0]
+  }
+  assert.ok(sleeper, 'idle agents should take naps')
+  const [spot] = napSpots(layout)
+  assert.deepEqual(simulation.get(sleeper).state.position, spot.point, 'the napping agent lies on the couch')
+  for (let i = 0; i < 4000 && simulation.get(sleeper).state.stage !== 'working'; i++) stepOfficeSimulation(simulation, ids, new Set([sleeper]), .05, 'lively')
+  assert.equal(simulation.get(sleeper).state.stage, 'working', 'a task wakes the napping agent and sends it to work')
+})
+
+test('pets visit agents, get petted, keep a napping agent company and rest in bed with motion off', () => {
+  const layout = makeOfficeLayout(DEFAULT_AGENTS)
+  const ids = new Set(layout.seats.map(seat => seat.agent.id))
+  const simulation = reconcileOfficeSimulation(layout)
+  const pets = createOfficePets(layout)
+  assert.deepEqual(pets.map(pet => pet.kind), ['dog', 'cat'])
+  const seen = new Set()
+  let petted = 0, catNap = 0, closest = Infinity
+  for (let i = 0; i < 36000; i++) {
+    const visits = petVisits(pets)
+    stepOfficeSimulation(simulation, ids, new Set(), .05, 'lively', visits)
+    for (const [id, actor] of simulation) if (actor.state.activity === 'pet' && actor.state.stage === 'idling') {
+      assert.ok(visits.has(id), 'agents only pet a pet that came to them')
+    }
+    stepOfficePets(pets, layout, simulation, ids, .05, 'lively')
+    for (const pet of pets) {
+      seen.add(`${pet.kind}:${pet.stage}`)
+      if (pet.stage === 'visiting') {
+        const actor = simulation.get(pet.target)
+        // The pet waits beside its agent.
+        const [hx, hz] = actor.plan.home
+        assert.ok(Math.hypot(pet.position[0] - hx - GREET_OFFSET[0], pet.position[1] - hz - GREET_OFFSET[1]) < 1e-6, 'visiting pet is beside the agent')
+        if (actor.state.stage === 'idling' && actor.state.activity === 'pet') { petted++; assert.equal(actor.state.facing, PET_FACING, 'the agent turns toward the pet') }
+      }
+      if (pet.kind === 'cat' && pet.stage === 'napping') { catNap++; assert.ok(isSleeping(simulation.get(pet.target)), 'the cat only naps beside a sleeping agent') }
+    }
+    const apart = Math.hypot(pets[0].position[0] - pets[1].position[0], pets[0].position[1] - pets[1].position[1])
+    assert.ok(apart >= .62 - 1e-6 || apart >= closest, `pets do not walk into each other (${apart.toFixed(2)} m)`)
+    closest = apart
+  }
+  for (const state of ['dog:walking', 'dog:visiting', 'dog:resting', 'cat:walking', 'cat:visiting', 'cat:napping']) assert.ok(seen.has(state), `${state} should happen`)
+  assert.ok(petted > 0, 'an idle agent pets a visiting pet')
+  assert.ok(catNap > 0, 'the cat curls up beside a napping agent')
+  // Reduced motion: pets rest in their beds.
+  stepOfficePets(pets, layout, simulation, ids, .05, 'off')
+  for (const pet of pets) { assert.equal(pet.stage, 'resting'); assert.deepEqual(pet.position, pet.bed) }
+  assert.deepEqual(Object.keys(PET_BEDS), ['dog', 'cat'])
 })

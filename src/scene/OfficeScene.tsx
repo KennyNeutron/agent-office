@@ -3,7 +3,7 @@ import { OrbitControls, OrthographicCamera, RoundedBox } from '@react-three/drei
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import type { Group, Mesh } from 'three'
 import { MathUtils, Vector3 } from 'three'
-import { CalendarClock, Network } from 'lucide-react'
+import { CalendarClock, Moon, Network } from 'lucide-react'
 import { type AgentId, type OfficeSchedule, type OfficeTask } from '../types'
 import { DEPARTMENTS, useAgents } from '../agents'
 import { OfficeCampus } from './OfficeCampus'
@@ -12,6 +12,8 @@ import { OfficeCrowdLOD } from './OfficeCrowdLOD'
 import { makeOfficeLayout, type OfficeLayout, type Seat } from './officeLayout'
 import { CHAIR_Z, STAND_Z } from './officeMotion'
 import { layoutGeometryKey, reconcileOfficeSimulation, stepOfficeSimulation, type OfficeSimulation } from './officeSimulation'
+import { createOfficePets, petVisits, stepOfficePets, type OfficePets } from './petSimulation'
+import { OfficePetsView } from './OfficePets'
 import { useOfficePreferences } from './OfficePreferencesContext'
 import type { OfficePreferences } from './officePreferences'
 import { useLanguage } from '../locales/i18n'
@@ -55,13 +57,19 @@ function BadgeProjector({ overlayId, seats, sectors, avatars, board, knowledge }
           label.dataset.walking = String(Boolean(avatar.userData.walking))
           label.dataset.coffeeBreak = String(Boolean(avatar.userData.coffeeBreak))
           label.dataset.idleActivity = String(avatar.userData.idleActivity || '')
+          // Recorded every frame, independent of the task pose React renders, so a new
+          // task never shows work before the avatar is seated (see index.css).
+          label.dataset.atDesk = String(Boolean(avatar.userData.atDesk))
+          label.dataset.sleeping = String(Boolean(avatar.userData.sleeping))
         }
         avatar.getWorldPosition(point.current)
         if (label) {
           label.dataset.worldX = point.current.x.toFixed(3)
           label.dataset.worldZ = point.current.z.toFixed(3)
         }
-        place(seat.agent.id, point.current.x, point.current.y + 2.28, point.current.z)
+        // A napping agent lies along its local -Z: label the middle of the body, just above it, not the feet.
+        if (avatar.userData.sleeping) { point.current.set(0, 1.45, -1.15); avatar.localToWorld(point.current); place(seat.agent.id, point.current.x, point.current.y, point.current.z) }
+        else place(seat.agent.id, point.current.x, point.current.y + 2.28, point.current.z)
       }
     }
     for (const sector of sectors) place(`sector:${sector.key}`, sector.center[0], 3.9, sector.center[2] - sector.depth / 2 + .3)
@@ -94,10 +102,11 @@ function FollowSelected({ selected, overview, avatars, center }: { selected: str
   return null
 }
 
-function Desk({ color, active, theme }: { color: string; active: boolean; theme: OfficePreferences['theme'] }) {
+function Desk({ color, workingRef, theme }: { color: string; workingRef: RefObject<boolean>; theme: OfficePreferences['theme'] }) {
   const monitor = useRef<Mesh>(null)
   useFrame(state => {
-    if (monitor.current) (monitor.current.material as { emissiveIntensity?: number }).emissiveIntensity = active ? .33 + Math.sin(state.clock.elapsedTime * 2.7) * .14 : .08
+    // The screen lights up for a task only once its agent is seated at it.
+    if (monitor.current) (monitor.current.material as { emissiveIntensity?: number }).emissiveIntensity = workingRef.current ? .33 + Math.sin(state.clock.elapsedTime * 2.7) * .14 : .08
   })
   return <group>
     {/* One workstation is a complete, grounded furniture cluster. The low
@@ -160,16 +169,18 @@ function Desk({ color, active, theme }: { color: string; active: boolean; theme:
   </group>
 }
 
-function Workstation({ seat, simulation, selected, pose, active, onSelect, preferences, avatars }: {
-  seat: Seat; simulation: RefObject<OfficeSimulation>; selected: boolean; pose: AgentPose; active: boolean; onSelect: () => void; preferences: OfficePreferences; avatars: RefObject<Map<string, Group>>
+function Workstation({ seat, simulation, selected, pose, onSelect, preferences, avatars }: {
+  seat: Seat; simulation: RefObject<OfficeSimulation>; selected: boolean; pose: AgentPose; onSelect: () => void; preferences: OfficePreferences; avatars: RefObject<Map<string, Group>>
 }) {
   const { agent, position } = seat
   const traveler = useRef<Group>(null)
   const walkRef = useRef(0)
   const gaitRef = useRef(0)
   const seatedRef = useRef(0)
+  const lieRef = useRef(0)
   const coffeeRef = useRef(false)
   const idleRef = useRef<IdlePose | null>(null)
+  const atDeskRef = useRef(false)
   useFrame((_, delta) => {
     if (!traveler.current) return
     const actor = simulation.current.get(agent.id)
@@ -178,6 +189,9 @@ function Workstation({ seat, simulation, selected, pose, active, onSelect, prefe
     traveler.current.userData.movementStage = frame.stage
     traveler.current.userData.coffeeBreak = frame.stage === 'coffee'
     traveler.current.userData.walking = frame.walking
+    // 'working' is only reached after walking back and sitting down at this desk.
+    atDeskRef.current = frame.stage === 'working'
+    traveler.current.userData.atDesk = atDeskRef.current
     gaitRef.current = actor.gait
     const smoothing = Math.min(delta, .05)
     traveler.current.position.x = frame.position[0] - position[0]
@@ -185,20 +199,24 @@ function Workstation({ seat, simulation, selected, pose, active, onSelect, prefe
     const turn = MathUtils.euclideanModulo(frame.facing - traveler.current.rotation.y + Math.PI, Math.PI * 2) - Math.PI
     traveler.current.rotation.y += MathUtils.clamp(turn, -smoothing * 5, smoothing * 5)
     walkRef.current = frame.walking ? 1 : 0
-    seatedRef.current = frame.seated
-    coffeeRef.current = frame.stage === 'coffee'
     // Map the simulated activity to an ambient pose (presentation only).
     const visit = frame.excursion >= 0 ? actor.plan.excursions[frame.excursion].activity : null
+    // On the nap couch the "seated" transition lays the body down instead of sitting it.
+    const napping = frame.stage === 'lounging' && visit === 'nap'
+    seatedRef.current = napping ? 0 : frame.seated
+    lieRef.current = napping ? frame.seated : 0
+    coffeeRef.current = frame.stage === 'coffee'
     idleRef.current = frame.stage === 'browsing' ? 'browse'
-      : frame.stage === 'lounging' ? (visit === 'chess' ? 'chess' : 'lap')
+      : frame.stage === 'lounging' ? (visit === 'chess' ? 'chess' : napping ? 'sleep' : 'lap')
       : frame.stage === 'viewing' ? (visit === 'darts' ? 'darts' : visit === 'pingpong' ? 'pingpong' : 'look')
-      : frame.stage === 'idling' && (frame.activity === 'stretch' || frame.activity === 'phone') ? frame.activity : null
+      : frame.stage === 'idling' && (frame.activity === 'stretch' || frame.activity === 'phone' || frame.activity === 'pet') ? frame.activity : null
     traveler.current.userData.idleActivity = frame.activity ?? ''
+    traveler.current.userData.sleeping = napping && frame.seated > .6
   }, -.75)
   return <group position={position}>
-    <Desk color={seat.placement === 'lead' ? '#ba9759' : agent.color} active={active} theme={preferences.theme} />
+    <Desk color={seat.placement === 'lead' ? '#ba9759' : agent.color} workingRef={atDeskRef} theme={preferences.theme} />
     <group ref={node => { traveler.current = node; if (node) avatars.current.set(agent.id, node); else avatars.current.delete(agent.id) }} position={[0, 0, STAND_Z]} rotation={[0, Math.PI, 0]}>
-      <OfficeAvatar agent={agent} pose={pose} selected={selected} onSelect={onSelect} walkRef={walkRef} gaitRef={gaitRef} seatedRef={seatedRef} coffeeRef={coffeeRef} idleRef={idleRef} animate={preferences.motion !== 'off'}/>
+      <OfficeAvatar agent={agent} pose={pose} selected={selected} onSelect={onSelect} walkRef={walkRef} gaitRef={gaitRef} seatedRef={seatedRef} coffeeRef={coffeeRef} idleRef={idleRef} atDeskRef={atDeskRef} lieRef={lieRef} animate={preferences.motion !== 'off'}/>
     </group>
   </group>
 }
@@ -217,7 +235,13 @@ function Studio({ selected, tasks, schedules, readers, onOpenSchedules, onSelect
   const visibleIds = useMemo(() => new Set(visibleSeats.map(seat => seat.agent.id)), [visibleSeats])
   const detailedSectorKeys = useMemo(() => new Set(visibleSeats.map(seat => seat.sectorKey)), [visibleSeats])
   const activeIds = useMemo(() => new Set(tasks.filter(task => task.status === 'running').map(task => task.agentId)), [tasks])
-  useFrame((_, delta) => stepOfficeSimulation(simulation.current, visibleIds, activeIds, delta, preferences.motion), -1)
+  // Pets live beside the people: the layout remounts this scene, so they start fresh with it.
+  const [initialPets] = useState(() => createOfficePets(layout))
+  const pets = useRef<OfficePets>(initialPets)
+  useFrame((_, delta) => {
+    stepOfficeSimulation(simulation.current, visibleIds, activeIds, delta, preferences.motion, petVisits(pets.current))
+    stepOfficePets(pets.current, layout, simulation.current, visibleIds, delta, preferences.motion)
+  }, -1)
   const center = layout.seats.find(seat => seat.agent.id === selected)?.position || layout.sectors[0]?.center || [0, 0, 0]
   const target: [number, number, number] = overview ? [layout.width / 2, 1, layout.depth / 2] : [center[0], 1, center[2]]
   // Use the actual canvas size so every room fits on screen as the campus grows.
@@ -242,10 +266,11 @@ function Studio({ selected, tasks, schedules, readers, onOpenSchedules, onSelect
       shadow-normalBias={.028} shadow-bias={-.0002}/>
     <OfficeCampus layout={layout} preferences={preferences} detailedSectorKeys={detailedSectorKeys}/>
     <OfficeCrowdLOD seats={distantSeats} theme={preferences.theme} working={activeIds} simulation={simulation} onSelect={onSelect}/>
-    {visibleSeats.map(seat => <Workstation key={seat.agent.id} seat={seat} simulation={simulation} active={activeIds.has(seat.agent.id)} selected={selected === seat.agent.id} pose={resolveAgentPose(selectAgentTask(tasks, seat.agent.id, now), now)} onSelect={() => onSelect(seat.agent.id)} preferences={preferences} avatars={avatars}/>)}
+    {visibleSeats.map(seat => <Workstation key={seat.agent.id} seat={seat} simulation={simulation} selected={selected === seat.agent.id} pose={resolveAgentPose(selectAgentTask(tasks, seat.agent.id, now), now)} onSelect={() => onSelect(seat.agent.id)} preferences={preferences} avatars={avatars}/>)}
     <LoungeTV layout={layout} simulation={simulation}/>
     <GamesRoom layout={layout} preferences={preferences}/>
     <PingPongBall layout={layout} simulation={simulation}/>
+    <OfficePetsView pets={pets}/>
     <ScheduleBoard layout={layout} schedules={schedules} agents={agents} accent={preferences.accent} onOpen={onOpenSchedules}/>
     <KnowledgeGraph layout={layout} readers={readers} agents={agents} accent={preferences.accent} animate={preferences.motion !== 'off'}/>
     <BadgeProjector overlayId={overlayId} seats={visibleSeats} sectors={layout.sectors} avatars={avatars} board={board} knowledge={knowledge}/>
@@ -337,7 +362,7 @@ export default function OfficeScene({ selected, tasks, schedules = [], onOpenSch
         const pose = resolveAgentPose(task, now)
         const text = pose === 'celebrating' ? statusName.completed : pose === 'error' ? statusName[task?.status || 'failed'] : phaseName[pose]
         return <span key={agent.id} className={`scene-phase-label phase-${pose}${overview && pose === 'idle' ? ' overview-idle' : ''}`} data-agent={agent.id} data-pose={pose}>
-          <i aria-hidden="true" />{tr(text)}{scheduledAgents.has(agent.id) && <CalendarClock className="label-schedule" size={10} aria-label="Has scheduled tasks"/>}
+          <i aria-hidden="true" /><span className="label-phase">{tr(text)}</span><span className="label-away">{tr('Heading to desk')}</span><span className="label-sleep"><Moon size={10} aria-hidden="true"/>{tr('Sleeping')}</span>{scheduledAgents.has(agent.id) && <CalendarClock className="label-schedule" size={10} aria-label="Has scheduled tasks"/>}
         </span>
       })}
       <button type="button" className="scene-board-label" data-board="schedule" onClick={() => onOpenSchedules(null)}

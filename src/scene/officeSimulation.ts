@@ -1,7 +1,7 @@
 import type { OfficeLayout, Seat } from './officeLayout'
 import type { OfficeMotion } from './officePreferences'
 import { advanceMovement, CHAIR_Z, STAND_SIDE_X, STAND_Z, createMovementState, makeVisitRoute, makeWalkRoute, PAIRED, type ActorPlan, type Excursion, type MovementState, type Partner, type Route } from './officeMotion.ts'
-import { boardSpots, chessSeats, dartsSpots, pingPongSpots, tvSeats } from './loungeLayout.ts'
+import { boardSpots, chessSeats, dartsSpots, napSpots, pingPongSpots, tvSeats } from './loungeLayout.ts'
 
 export type OfficeActor = { state: MovementState; plan: ActorPlan; ordinal: number; gait: number; blocked?: boolean }
 export type OfficeSimulation = Map<string, OfficeActor>
@@ -33,6 +33,7 @@ export function planForSeat(layout: OfficeLayout, seat: Seat, ordinal: number): 
       ...dartsSpots(layout).map(spot => makeVisitRoute(seat, sector, front, layout.spineX, spot, 'darts')),
       ...pingPongSpots(layout).map(spot => makeVisitRoute(seat, sector, front, layout.spineX, spot, 'pingpong')),
       ...chessSeats(layout).map(spot => makeVisitRoute(seat, sector, front, layout.spineX, spot, 'chess')),
+      ...napSpots(layout).map(spot => makeVisitRoute(seat, sector, front, layout.spineX, spot, 'nap')),
     ],
   }
 }
@@ -93,7 +94,8 @@ export function gamesWaiting(simulation: OfficeSimulation): Set<Excursion> {
 // host one agent at a time, and only one idle agent walks the corridors at once.
 // Chess and table tennis pair two agents: a lone player waits for an opponent,
 // and idle agents usually go to join them. Real tasks always outrank idle routines.
-export function stepOfficeSimulation(simulation: OfficeSimulation, visibleIds: ReadonlySet<string>, activeIds: ReadonlySet<string>, dt: number, motion: OfficeMotion) {
+export function stepOfficeSimulation(simulation: OfficeSimulation, visibleIds: ReadonlySet<string>, activeIds: ReadonlySet<string>, dt: number, motion: OfficeMotion,
+  petVisits: ReadonlySet<string> = new Set()) {
   const cell = (position: [number, number]) => `${Math.floor(position[0])},${Math.floor(position[1])}`
   const occupied = new Map<string, Set<string>>()
   const occupy = (id: string, position: [number, number]) => {
@@ -119,6 +121,7 @@ export function stepOfficeSimulation(simulation: OfficeSimulation, visibleIds: R
       corridor: walkers === 0,
       partner: partnerOf(simulation, actor),
       waiting,
+      pet: petVisits.has(id),
     })
     // Personal space: a step may not move closer than .72 m to someone. Stepping
     // away is always allowed. Between two agents who both want to move, the
@@ -147,6 +150,12 @@ export function stepOfficeSimulation(simulation: OfficeSimulation, visibleIds: R
     if (spot) spots.add(spot)
     walkers += Number(usesCorridor(actor)) - Number(priorWalking)
   }
+}
+
+/** Lying asleep on the nap couch (presentation only). */
+export function isSleeping(actor: OfficeActor): boolean {
+  const { stage, excursion, seated } = actor.state
+  return stage === 'lounging' && seated > .6 && actor.plan.excursions[excursion]?.activity === 'nap'
 }
 
 /** Someone is settled on the sofa watching. */

@@ -5,7 +5,7 @@ import { CanvasTexture, SRGBColorSpace, type Mesh } from 'three'
 import type { OfficeLayout } from './officeLayout'
 import type { OfficePreferences } from './officePreferences'
 import { playersAt, type OfficeSimulation } from './officeSimulation'
-import { GAMES, gamesRoom } from './loungeLayout'
+import { GAMES, gamesRoom, NAP_COUCH, napCouch } from './loungeLayout'
 
 // Concentric dartboard rings, outermost first: [radius, colour].
 const DART_RINGS: [number, string][] = [[.25, '#1b1f27'], [.225, '#d23b3b'], [.215, '#efe3c4'], [.15, '#2f8f55'], [.14, '#1b1f27'], [.03, '#2f8f55'], [.014, '#d23b3b']]
@@ -82,12 +82,37 @@ function ChessTable({ x, z }: { x: number; z: number }) {
   </group>
 }
 
+/** A long couch against the games room's back wall for naps: cushions, a backrest on the south side, armrests and a pillow at the west end. */
+function NapCouch({ x, z, theme }: { x: number; z: number; theme: OfficePreferences['theme'] }) {
+  const { length, depth, seatTop, armrest } = NAP_COUCH
+  const fabric = theme === 'midnight' ? '#6b6f9a' : '#8d93c4', frame = theme === 'midnight' ? '#4c5079' : '#6b70a3'
+  return <group position={[x, 0, z]} name="nap-couch">
+    <mesh position={[0, .003, -.15]} receiveShadow><boxGeometry args={[length + .5, .006, depth + .9]}/><meshStandardMaterial color={theme === 'midnight' ? '#3f4566' : '#d9dbef'} roughness={1}/></mesh>
+    <RoundedBox position={[0, .2, 0]} args={[length, .3, depth]} radius={.06} castShadow><meshStandardMaterial color={frame} roughness={.85}/></RoundedBox>
+    {[-1, 0, 1].map(slot => <RoundedBox key={slot} position={[slot * (length - armrest * 2) / 3, seatTop - .07, -.03]} args={[(length - armrest * 2) / 3 - .03, .14, depth - .12]} radius={.06} castShadow>
+      <meshStandardMaterial color={fabric} roughness={.92}/>
+    </RoundedBox>)}
+    {/* A low daybed back, so a napping agent stays visible from the office side. */}
+    <RoundedBox position={[0, .6, depth / 2 - .08]} args={[length, .3, .16]} radius={.07} castShadow><meshStandardMaterial color={frame} roughness={.85}/></RoundedBox>
+    {[-1, 1].map(side => <RoundedBox key={side} position={[side * (length / 2 - armrest / 2), .52, 0]} args={[armrest, .4, depth]} radius={.06} castShadow>
+      <meshStandardMaterial color={frame} roughness={.85}/>
+    </RoundedBox>)}
+    {/* Pillow under a napping agent's head, at the west end. */}
+    <RoundedBox position={[-length / 2 + armrest + .22, seatTop + .05, -.05]} args={[.34, .1, .52]} radius={.05}><meshStandardMaterial color="#f2efe6" roughness={.95}/></RoundedBox>
+    <RoundedBox position={[length / 2 - armrest - .3, seatTop + .02, .1]} args={[.5, .05, .62]} radius={.02}><meshStandardMaterial color="#e2a65b" roughness={.95}/></RoundedBox>
+    {[-1, 1].map(sx => [-1, 1].map(sz => <mesh key={`${sx}${sz}`} position={[sx * (length / 2 - .1), .03, sz * (depth / 2 - .1)]}>
+      <cylinderGeometry args={[.035, .03, .06, 8]}/><meshStandardMaterial color="#3b4656"/>
+    </mesh>))}
+  </group>
+}
+
 /** Static games room furniture along the south strip of the floor. */
 export function GamesRoom({ layout, preferences }: { layout: OfficeLayout; preferences: OfficePreferences }) {
   const room = gamesRoom(layout)
   if (!room) return null
   const floor = preferences.theme === 'midnight' ? '#33485c' : preferences.theme === 'warm' ? '#e6d3c1' : '#dbe6ee'
   const length = layout.width - 1.2
+  const couch = napCouch(layout)
   return <group name="games-room">
     <mesh position={[layout.width / 2, .004, room.rowZ]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
       <planeGeometry args={[length, 3.4]}/><meshStandardMaterial color={floor} roughness={.95}/>
@@ -96,6 +121,7 @@ export function GamesRoom({ layout, preferences }: { layout: OfficeLayout; prefe
     <Dartboard x={room.dartsBoardX} z={room.rowZ}/>
     <PingPongTable x={room.tableX} z={room.rowZ}/>
     <ChessTable x={room.chessX} z={room.rowZ}/>
+    {couch && <NapCouch x={couch.x} z={couch.z} theme={preferences.theme}/>}
   </group>
 }
 

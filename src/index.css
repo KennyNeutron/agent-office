@@ -34,11 +34,12 @@ footer{padding:20px 37px;display:flex;justify-content:space-between;gap:10px;bor
 .office-reset:hover{background:#e0ebf7}
 .office-3d-shell[data-office-theme=daylight]~.scene-top-left,.office-3d-shell[data-office-theme=warm]~.scene-top-left{color:#fff}
 @media(max-width:540px){.office-options{grid-template-columns:1fr}}
-.scene-overview-btn{position:absolute;right:15px;bottom:14px;z-index:2;display:grid;place-items:center;width:37px;height:37px;border:1px solid #ffffff36;border-radius:9px;background:#16263edb;color:#e6f2ff;cursor:pointer;backdrop-filter:blur(8px);transition:background .15s ease}
+.scene-view-btns{position:absolute;right:15px;bottom:14px;z-index:2;display:flex;gap:8px}
+.scene-overview-btn{display:grid;place-items:center;width:37px;height:37px;border:1px solid #ffffff36;border-radius:9px;background:#16263edb;color:#e6f2ff;cursor:pointer;backdrop-filter:blur(8px);transition:background .15s ease}
 .scene-overview-btn:hover:not(:disabled){background:#304b70}
 .scene-overview-btn:disabled{opacity:.45;cursor:default}
 .scene-phase-label.overview-idle{display:none}
-@media(max-width:740px){.scene-hint{right:59px;white-space:normal;line-height:1.35}.scene-overview-btn{right:10px;bottom:10px}}
+@media(max-width:740px){.scene-hint{right:104px;white-space:normal;line-height:1.35}.scene-view-btns{right:10px;bottom:10px;gap:6px}}
 .scene-phase-overlay{position:absolute;inset:0;overflow:hidden;pointer-events:none}
 .scene-phase-label{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;border:1px solid #536a8d;background:#16243bea;color:#e3efff;box-shadow:0 4px 16px #020d2280;padding:5px 9px;border-radius:8px;font:700 10px 'DM Sans',system-ui,sans-serif;letter-spacing:.15px;user-select:none}
 .scene-phase-overlay .scene-phase-label{position:absolute;transform:translate(-50%,-50%);left:-100px;top:-100px}
@@ -52,6 +53,17 @@ footer{padding:20px 37px;display:flex;justify-content:space-between;gap:10px;bor
 .scene-phase-label.phase-error{border-color:#cd6d82;color:#ffe9ed}
 .scene-phase-label.phase-error i{background:#ff7894}
 .scene-phase-label.phase-idle{opacity:.75}
+/* Work phases (agentBehavior WORK_POSES) read "Heading to desk" until the avatar is seated at its desk. */
+.scene-phase-label .label-away{display:none}
+.scene-phase-label:is(.phase-thinking,.phase-coding,.phase-researching,.phase-finishing):not([data-at-desk="true"]) .label-phase{display:none}
+.scene-phase-label:is(.phase-thinking,.phase-coding,.phase-researching,.phase-finishing):not([data-at-desk="true"]) .label-away{display:inline}
+.scene-phase-label:is(.phase-thinking,.phase-coding,.phase-researching,.phase-finishing):not([data-at-desk="true"]) i{background:#a4b5ce}
+/* An idle agent napping on the couch reads "Sleeping" (shown even in overview and on narrow screens). */
+.scene-phase-label .label-sleep{display:none;align-items:center;gap:4px}
+.scene-phase-label.phase-idle[data-sleeping="true"] .label-phase{display:none}
+.scene-phase-label.phase-idle[data-sleeping="true"] .label-sleep{display:inline-flex}
+.scene-phase-overlay .scene-phase-label.phase-idle[data-sleeping="true"]{display:inline-flex;opacity:1;border-color:#7b7fc4;background:#1f2350ea;color:#e3e4ff}
+.scene-phase-label.phase-idle[data-sleeping="true"] i{background:#9ea2ff}
 
 /* Event inspector: a compact status console driven by real task events. */
 .execution-inspector{min-width:0;margin-top:16px;border:1px solid #e6e9f4;border-radius:12px;background:#fff;overflow:hidden}
@@ -386,3 +398,6 @@ select:focus-visible{outline:3px solid #9a96f2;outline-offset:2px}
 
 /* In-progress dots pulse gently; completed ones stay solid. */
 @keyframes dot-pulse{50%{box-shadow:0 0 0 5px #4c8ff000}}
+
+/* Full-screen live office: the frame fills the screen and the canvas resizes with it. */
+.scene-frame:fullscreen{height:100%;width:100%;border:0;border-radius:0}

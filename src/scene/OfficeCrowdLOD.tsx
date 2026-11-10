@@ -4,6 +4,7 @@ import { Color, Object3D, Vector3, type InstancedMesh } from 'three'
 import { makeAvatarRigPose, type RigPoint } from './avatarRig'
 import type { Seat } from './officeLayout'
 import { CHAIR_Z } from './officeMotion'
+import { LIE_LIFT } from './loungeLayout'
 import type { OfficePreferences } from './officePreferences'
 import type { OfficeSimulation } from './officeSimulation'
 
@@ -38,8 +39,12 @@ export function OfficeCrowdLOD({ seats, theme, working, simulation, onSelect }: 
         mesh.setMatrixAt(targetIndex, temp.matrix)
       }
       const personX = state.position[0], personZ = state.position[1], c = Math.cos(state.facing), s = Math.sin(state.facing)
-      const world = (point: RigPoint): RigPoint => [personX + point[0] * c + point[2] * s, point[1], personZ - point[0] * s + point[2] * c]
-      const rig = makeAvatarRigPose(state.seated, state.walking, 0, working.has(seat.agent.id) ? 'coding' : 'idle', 0, actor.gait)
+      // Napping lays the body back about the feet (as OfficeAvatar does): local y -> -z, lifted onto the couch.
+      const napping = state.stage === 'lounging' && actor.plan.excursions[state.excursion]?.activity === 'nap'
+      const lie = napping ? state.seated * state.seated * (3 - 2 * state.seated) : 0, angle = -lie * Math.PI / 2
+      const laid = (point: RigPoint): RigPoint => lie ? [point[0], point[1] * Math.cos(angle) - point[2] * Math.sin(angle) + lie * LIE_LIFT, point[1] * Math.sin(angle) + point[2] * Math.cos(angle)] : point
+      const world = (input: RigPoint): RigPoint => { const point = laid(input); return [personX + point[0] * c + point[2] * s, point[1], personZ - point[0] * s + point[2] * c] }
+      const rig = makeAvatarRigPose(napping ? 0 : state.seated, state.walking, 0, working.has(seat.agent.id) && state.stage === 'working' ? 'coding' : 'idle', 0, actor.gait)
       const bone = (mesh: InstancedMesh | null, start: RigPoint, end: RigPoint, boneIndex: number) => {
         if (!mesh) return
         const a = world(start), b = world(end)
@@ -57,7 +62,7 @@ export function OfficeCrowdLOD({ seats, theme, working, simulation, onSelect }: 
       }
       const body = world([0, 1.4 - rig.torsoDrop, -.045]), hairTop = world([0, 2.085 - rig.torsoDrop, -.018])
       put(torsos.current, ...body, index, [1, 1, 1], state.facing)
-      put(heads.current, personX, 1.98 - rig.torsoDrop, personZ)
+      put(heads.current, ...world([0, 1.98 - rig.torsoDrop, 0]))
       put(hair.current, ...hairTop, index, [1, 1, 1], state.facing)
       for (let side = 0; side < 2; side++) {
         const arm = rig.arms[side], leg = rig.legs[side]

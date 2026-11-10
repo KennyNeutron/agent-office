@@ -106,3 +106,52 @@ export function chessSeats(layout: OfficeLayout): VisitSpot[] {
     return { key: `chess-${index}`, point, facing: side < 0 ? FACING_EAST : FACING_WEST, approach, lane: laneTo(layout, room, approach) }
   })
 }
+
+// ---- Nap couch and pet beds (south wall of the games room). ----
+/**
+ * A long couch against the games room's back wall, west of the corridor, where
+ * one idle agent at a time lies down for a nap. Lengths fit a lying avatar
+ * (2.25 m from shoes to crown) between the armrests.
+ */
+export const NAP_COUCH = {
+  fromSpine: 3.0, // couch centre, west of the corridor
+  fromSouth: .75, // couch centre, north of the floor's south edge
+  length: 2.8, depth: .95, seatTop: .5, armrest: .16,
+  feet: 1.05, // the lying agent's shoes rest this far east of the couch centre; the head lies toward the west armrest
+  forward: .08, // lie this far in front of the couch centre, clear of the backrest
+  approach: .55, // stand point in front of the couch, beyond its front edge
+}
+/** The lying body's hips sit this far above the seat, so the back rests on the cushion. */
+export const LIE_LIFT = NAP_COUCH.seatTop + .29
+
+export type NapCouch = { x: number; z: number; approachZ: number }
+export function napCouch(layout: OfficeLayout): NapCouch | null {
+  const room = gamesRoom(layout)
+  if (!room) return null
+  const z = layout.depth - NAP_COUCH.fromSouth
+  return { x: layout.spineX - NAP_COUCH.fromSpine, z, approachZ: z - NAP_COUCH.depth / 2 - NAP_COUCH.approach }
+}
+
+/** The nap spot: lie point on the couch, approached from the front along a lane off the corridor. Feet east, facing east. */
+export function napSpots(layout: OfficeLayout): VisitSpot[] {
+  const couch = napCouch(layout)
+  if (!couch) return []
+  const point: Point = [couch.x + NAP_COUCH.feet, couch.z - NAP_COUCH.forward]
+  const approach: Point = [point[0], couch.approachZ]
+  return [{ key: 'nap-0', point, facing: FACING_EAST, approach, lane: [[layout.spineX, couch.approachZ], approach] }]
+}
+
+/** Pet beds in the games room's south strip, east of the corridor; pets walk the same lane line as the nap couch. */
+export const PET_BEDS = { dog: 2.2, cat: 3.5 } // east of the corridor
+export type PetGeometry = { laneZ: number; bedZ: number; beds: Record<'dog' | 'cat', Point>; catNap: Point }
+export function petGeometry(layout: OfficeLayout): PetGeometry | null {
+  const couch = napCouch(layout)
+  if (!couch) return null
+  const bedZ = layout.depth - .7
+  return {
+    laneZ: couch.approachZ, bedZ,
+    beds: { dog: [layout.spineX + PET_BEDS.dog, bedZ], cat: [layout.spineX + PET_BEDS.cat, bedZ] },
+    // The cat curls up in front of the couch, by a napping agent's head (west of the agent's stand point).
+    catNap: [couch.x - .75, couch.approachZ + .12],
+  }
+}

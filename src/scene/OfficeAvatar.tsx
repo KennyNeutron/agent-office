@@ -1,10 +1,29 @@
 import { RoundedBox } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
 import { useRef, type RefObject } from 'react'
-import { MathUtils, Vector3, type Group, type Mesh } from 'three'
+import { CanvasTexture, MathUtils, SRGBColorSpace, Vector3, type Group, type Mesh, type Sprite } from 'three'
 import type { OfficeAgent } from '../types'
-import type { AgentPose } from './agentBehavior'
+import { presentedPose, type AgentPose } from './agentBehavior'
 import { makeAvatarRigPose, type IdleBlend, type IdlePose, type RigPoint } from './avatarRig'
+import { LIE_LIFT } from './loungeLayout'
+
+// One shared "Z" texture for every sleeping avatar.
+let zTexture: CanvasTexture | null = null
+function sleepTexture() {
+  if (zTexture) return zTexture
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = 64
+  const context = canvas.getContext('2d')
+  if (context) {
+    context.font = "900 52px 'DM Sans', system-ui, sans-serif"
+    context.textAlign = 'center'; context.textBaseline = 'middle'
+    context.lineWidth = 8; context.strokeStyle = '#2c3b55'; context.strokeText('Z', 32, 34)
+    context.fillStyle = '#eef3ff'; context.fillText('Z', 32, 34)
+  }
+  zTexture = new CanvasTexture(canvas)
+  zTexture.colorSpace = SRGBColorSpace
+  return zTexture
+}
 
 const UP = new Vector3(0, 1, 0)
 const BONE_START = new Vector3()
@@ -22,11 +41,15 @@ function fitBone(mesh: Mesh | undefined, start: RigPoint, end: RigPoint) {
   mesh.scale.y = length
 }
 
-export function OfficeAvatar({ agent, pose, selected, onSelect, walkRef, gaitRef, seatedRef, coffeeRef, idleRef, animate = true }: {
+export function OfficeAvatar({ agent, pose, selected, onSelect, walkRef, gaitRef, seatedRef, coffeeRef, idleRef, atDeskRef, lieRef, animate = true }: {
   agent: OfficeAgent; pose: AgentPose; selected: boolean; onSelect: () => void
   walkRef: RefObject<number>; gaitRef: RefObject<number>; seatedRef: RefObject<number>; coffeeRef: RefObject<boolean>
   /** Current ambient idle pose, if any. */
   idleRef?: RefObject<IdlePose | null>
+  /** True only while seated at the agent's own desk working; gates work poses. */
+  atDeskRef?: RefObject<boolean>
+  /** 0..1: lying down on the nap couch (the whole body tips back onto the cushion). */
+  lieRef?: RefObject<number>
   animate?: boolean
 }) {
   const model = useRef<Group>(null)
@@ -46,7 +69,10 @@ export function OfficeAvatar({ agent, pose, selected, onSelect, walkRef, gaitRef
   const coffeeTime = useRef(0)
   const thinkingBlend = useRef(0)
   const walkBlend = useRef(0)
-  const idleBlend = useRef<Required<IdleBlend>>({ browse: 0, lap: 0, stretch: 0, phone: 0, look: 0, darts: 0, pingpong: 0, chess: 0 })
+  const idleBlend = useRef<Required<IdleBlend>>({ browse: 0, lap: 0, stretch: 0, phone: 0, look: 0, darts: 0, pingpong: 0, chess: 0, sleep: 0, pet: 0 })
+  const eyes = useRef<Mesh[]>([])
+  const sleepZs = useRef<Sprite[]>([])
+  const sleepGroup = useRef<Group>(null)
   const phone = useRef<Group>(null)
   const paddle = useRef<Group>(null)
   const dart = useRef<Group>(null)
@@ -55,7 +81,8 @@ export function OfficeAvatar({ agent, pose, selected, onSelect, walkRef, gaitRef
 
   useFrame(({ clock }, delta) => {
     const t = animate ? clock.elapsedTime : 0
-    thinkingBlend.current = MathUtils.damp(thinkingBlend.current, pose === 'thinking' ? 1 : 0, 4, Math.min(delta, .05))
+    const shown = presentedPose(pose, atDeskRef?.current ?? true)
+    thinkingBlend.current = MathUtils.damp(thinkingBlend.current, shown === 'thinking' ? 1 : 0, 4, Math.min(delta, .05))
     walkBlend.current = MathUtils.damp(walkBlend.current, walkRef.current, 8, Math.min(delta, .05))
     coffeeBlend.current = MathUtils.damp(coffeeBlend.current, coffeeRef.current ? 1 : 0, 5, Math.min(delta, .05))
     coffeeTime.current = coffeeRef.current ? coffeeTime.current + Math.min(delta, .05) : 0
@@ -67,12 +94,25 @@ export function OfficeAvatar({ agent, pose, selected, onSelect, walkRef, gaitRef
     if (paddle.current) paddle.current.visible = idleBlend.current.pingpong > .35
     if (dart.current) dart.current.visible = idleBlend.current.darts > .35
     if (coffeeCup.current) { coffeeCup.current.visible = coffeeBlend.current > .2; coffeeCup.current.rotation.x = -.18 * (.5 - .5 * Math.cos(coffeeTime.current * 1.35)) }
-    const rig = makeAvatarRigPose(seatedRef.current, walkBlend.current, t, pose, thinkingBlend.current, gaitRef.current, coffeeBlend.current, coffeeTime.current, idleBlend.current)
+    const rig = makeAvatarRigPose(seatedRef.current, walkBlend.current, t, shown, thinkingBlend.current, gaitRef.current, coffeeBlend.current, coffeeTime.current, idleBlend.current)
     // Breathing moves the upper body, never lifts the planted shoes off the floor.
-    if (model.current) model.current.position.y = 0
+    // Napping tips the whole body back about the feet onto the couch: head toward -Z, face up.
+    const lieInput = MathUtils.clamp(lieRef?.current ?? 0, 0, 1), lie = lieInput * lieInput * (3 - 2 * lieInput)
+    if (model.current) { model.current.position.y = lie * LIE_LIFT; model.current.rotation.x = -lie * Math.PI / 2 }
+    const sleep = idleBlend.current.sleep * lie
+    for (const eye of eyes.current) if (eye) eye.scale.y = 1.2 * (1 - .88 * sleep)
+    if (sleepGroup.current) sleepGroup.current.visible = sleep > .6
+    sleepZs.current.forEach((z, index) => {
+      if (!z) return
+      // Three Zs drift up from the face in turn, growing and fading.
+      const phase = animate ? (clock.elapsedTime * .45 + index / 3) % 1 : index / 3
+      z.position.set(Math.sin(phase * 5 + index) * .08, phase * .7, -phase * .1)
+      z.scale.setScalar(.12 + phase * .14)
+      z.material.opacity = Math.min(1, phase * 4) * (1 - phase)
+    })
     if (torso.current) {
       torso.current.position.y = -rig.torsoDrop + rig.bob
-      torso.current.rotation.x = MathUtils.damp(torso.current.rotation.x, pose === 'error' ? .1 : -idleBlend.current.lap * .07, 7, Math.min(delta, .05))
+      torso.current.rotation.x = MathUtils.damp(torso.current.rotation.x, shown === 'error' ? .1 : idleBlend.current.pet * .12 - idleBlend.current.lap * .07, 7, Math.min(delta, .05))
     }
     if (head.current) {
       head.current.rotation.x = MathUtils.damp(head.current.rotation.x, rig.headPitch, 7, Math.min(delta, .05))
@@ -102,6 +142,11 @@ export function OfficeAvatar({ agent, pose, selected, onSelect, walkRef, gaitRef
     {selected && <mesh ref={halo} position={[0, .035, 0]} rotation={[-Math.PI / 2, 0, 0]}>
       <torusGeometry args={[.57, .028, 8, 48]}/><meshBasicMaterial color={agent.color} toneMapped={false}/>
     </mesh>}
+    <group ref={sleepGroup} visible={false} position={[0, LIE_LIFT + .5, -1.95]}>
+      {[0, 1, 2].map(index => <sprite key={index} ref={node => { if (node) sleepZs.current[index] = node }}>
+        <spriteMaterial map={sleepTexture()} transparent depthWrite={false} toneMapped={false}/>
+      </sprite>)}
+    </group>
     <group ref={model}>
       <group ref={torso}>
         <RoundedBox position={[0, 1.40, -.045]} args={[.7, .70, .48]} radius={.21} castShadow>
@@ -119,7 +164,7 @@ export function OfficeAvatar({ agent, pose, selected, onSelect, walkRef, gaitRef
           <mesh castShadow><sphereGeometry args={[.275, 20, 16]}/><meshStandardMaterial color={skin} roughness={.83}/></mesh>
           <mesh position={[0, .105, -.018]} castShadow><sphereGeometry args={[.287, 20, 14, 0, Math.PI * 2, 0, Math.PI * .55]}/><meshStandardMaterial color={hair} roughness={.91}/></mesh>
           {[-1, 1].map(side => <group key={side}>
-            <mesh position={[side * .117, .013, .247]} scale={[.8, 1.2, .65]}><sphereGeometry args={[.023, 9, 7]}/><meshStandardMaterial color="#172638"/></mesh>
+            <mesh ref={node => { if (node) eyes.current[side === -1 ? 0 : 1] = node }} position={[side * .117, .013, .247]} scale={[.8, 1.2, .65]}><sphereGeometry args={[.023, 9, 7]}/><meshStandardMaterial color="#172638"/></mesh>
             <mesh position={[side * .117, .09, .235]} rotation={[0, 0, side * -.14]}><boxGeometry args={[.085, .018, .017]}/><meshStandardMaterial color={hair}/></mesh>
             <mesh position={[side * .271, -.04, 0]}><sphereGeometry args={[.062, 8, 8]}/><meshStandardMaterial color={skin}/></mesh>
           </group>)}

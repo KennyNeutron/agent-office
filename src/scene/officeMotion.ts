@@ -4,9 +4,9 @@ import type { VisitSpot } from './loungeLayout'
 
 export type Point = [number, number]
 /** Idle activities that leave the desk. */
-export type Excursion = 'coffee' | 'schedule' | 'tv' | 'darts' | 'pingpong' | 'chess'
+export type Excursion = 'coffee' | 'schedule' | 'tv' | 'darts' | 'pingpong' | 'chess' | 'nap'
 /** Everything an idle agent can do. Ambient presentation only: none of it reflects task progress. */
-export type IdleActivity = 'desk' | 'stretch' | 'phone' | Excursion
+export type IdleActivity = 'desk' | 'stretch' | 'phone' | 'pet' | Excursion
 export type VisitStage = 'coffee' | 'resting' | 'viewing' | 'lounging'
 export type Route = {
   points: Point[]; durations: number[]; total: number; breakIndex: number; breakStage: VisitStage
@@ -20,6 +20,8 @@ export const STAND_Z = 1.18
 export const STAND_SIDE_X = .98
 export const AISLE_Z = 2.32
 export const DESK_FACING = Math.PI
+/** Petting a visiting pet: the agent turns from the desk toward the pet waiting on its right (east). */
+export const PET_FACING = Math.PI / 2
 // Walking to the front of the chair and sitting are separate phases.
 export const CHAIR_APPROACH_Z = .56
 const SIT_SECONDS = .72
@@ -61,8 +63,8 @@ export function makeVisitRoute(seat: Seat, sector: Sector, front: number, spineX
   const sideAisle = sector.center[0] - sector.width / 2 + .55
   const outbound: Point[] = [[x + STAND_SIDE_X, z + STAND_Z], [x + STAND_SIDE_X, z + AISLE_Z], [sideAisle, z + AISLE_Z], [sideAisle, front], [spineX, front], ...spot.lane]
   const points = [...outbound, ...outbound.slice(0, -1).reverse()]
-  // Seated visits (sofa, chess chair) sit back from the stand point into the seat; the rest stand at the spot.
-  const seated = activity === 'tv' || activity === 'chess'
+  // Seated visits (sofa, chess chair, lying down on the nap couch) move from the stand point into the seat; the rest stand at the spot.
+  const seated = activity === 'tv' || activity === 'chess' || activity === 'nap'
   return timed(points, outbound.length - 1, seated ? 'lounging' : 'viewing', activity, spot.key, spot.facing, seated ? spot.point : undefined)
 }
 
@@ -126,10 +128,11 @@ export function idleRandom(ordinal: number, plan: number, salt = 0): number {
 }
 
 // Recreation (TV and the games room) gets the largest share of idle time.
-const WEIGHTS: [IdleActivity, number][] = [['desk', 18], ['stretch', 5], ['phone', 6], ['coffee', 8], ['schedule', 5], ['tv', 15], ['darts', 13], ['pingpong', 15], ['chess', 15]]
+// 'pet' is never picked at random: it starts when a pet comes to visit (MovementAccess.pet).
+const WEIGHTS: [IdleActivity, number][] = [['desk', 18], ['stretch', 5], ['phone', 6], ['coffee', 8], ['schedule', 5], ['tv', 15], ['darts', 13], ['pingpong', 15], ['chess', 15], ['nap', 6]]
 const DURATION: Record<IdleActivity, [number, number]> = {
   desk: [14, 30], stretch: [4.5, 6.5], phone: [7, 13], coffee: [5, 7], schedule: [5, 8], tv: [35, 70],
-  darts: [30, 55], pingpong: [45, 80], chess: [60, 110],
+  darts: [30, 55], pingpong: [45, 80], chess: [60, 110], nap: [35, 70], pet: [6, 9],
 }
 /** Games that need two players. Playing time only counts while both are there. */
 export const PAIRED: ReadonlySet<Excursion> = new Set(['pingpong', 'chess'])
@@ -146,7 +149,9 @@ export type Partner = 'playing' | 'coming' | 'none'
  * `partner` is the state of the opponent at this agent's game; `waiting` lists
  * two-player games where someone sits alone waiting for an opponent.
  */
-export type MovementAccess = { depart?: (route: Route) => boolean; corridor?: boolean; partner?: Partner; waiting?: ReadonlySet<Excursion> }
+export type MovementAccess = { depart?: (route: Route) => boolean; corridor?: boolean; partner?: Partner; waiting?: ReadonlySet<Excursion>
+  /** A pet is waiting beside this agent's desk; an idle agent standing there turns to pet it. */
+  pet?: boolean }
 
 /** Picks the next idle activity. Excursions only start when their spot and the corridor are free. */
 export function chooseIdleActivity(state: MovementState, plan: ActorPlan, ordinal: number, depart: (route: Route) => boolean,
@@ -271,6 +276,12 @@ export function advanceMovement(state: MovementState, plan: ActorPlan, dt: numbe
   if (next.stage === 'standing') {
     next.position = [...home]
     next.facing = DESK_FACING
+    if (!active && !still && access.pet) {
+      next.stage = 'idling'; next.activity = 'pet'; next.idleTime = 0; next.wait = 0
+      next.duration = pick(ordinal, next.plan++, 8, DURATION.pet)
+      next.facing = PET_FACING
+      return next
+    }
     if (!active && !still) {
       next.idleTime += step * (motion === 'subtle' ? .45 : 1)
       // A short, staggered pause so a team does not move in lockstep.
@@ -297,7 +308,9 @@ export function advanceMovement(state: MovementState, plan: ActorPlan, dt: numbe
   }
   if (next.stage === 'idling') {
     next.position = [...home]
-    next.facing = DESK_FACING
+    next.facing = next.activity === 'pet' ? PET_FACING : DESK_FACING
+    // Petting stops as soon as the pet wanders off.
+    if (next.activity === 'pet' && !access.pet) next.duration = Math.min(next.duration, next.wait)
     next.wait += step * (motion === 'subtle' ? .45 : 1)
     if (next.wait >= next.duration) { next.stage = 'standing'; next.idleTime = 0; next.wait = 0 }
     return next
