@@ -26,11 +26,11 @@ import { KnowledgeGraph } from './KnowledgeGraph'
 import { useKnowledgeReaders } from './useKnowledgeReaders'
 import { KNOWLEDGE_LABEL, knowledgeGraphPosition, type KnowledgeReader } from './knowledgeGraphLayout'
 import type { IdlePose } from './avatarRig'
-import { resolveAgentPose, selectAgentTask, TERMINAL_POSE_MS, type AgentPose } from './agentBehavior'
+import { idleStatus, resolveAgentPose, selectAgentTask, TERMINAL_POSE_MS, type AgentPose } from './agentBehavior'
 
 // Project world positions to the existing React DOM layer without creating
 // separate React roots inside Three.js (which can race during unmount).
-function BadgeProjector({ overlayId, seats, sectors, avatars, board, knowledge }: { overlayId: string; seats: Seat[]; sectors: OfficeLayout['sectors']; avatars: RefObject<Map<string, Group>>; board: [number, number, number]; knowledge: [number, number, number] }) {
+function BadgeProjector({ overlayId, seats, sectors, avatars, board, knowledge, translate }: { translate: (text: string) => string; overlayId: string; seats: Seat[]; sectors: OfficeLayout['sectors']; avatars: RefObject<Map<string, Group>>; board: [number, number, number]; knowledge: [number, number, number] }) {
   const point = useRef(new Vector3())
   const labels = useRef<Map<string, HTMLSpanElement>>(new Map())
   useEffect(() => {
@@ -61,6 +61,9 @@ function BadgeProjector({ overlayId, seats, sectors, avatars, board, knowledge }
           // task never shows work before the avatar is seated (see index.css).
           label.dataset.atDesk = String(Boolean(avatar.userData.atDesk))
           label.dataset.sleeping = String(Boolean(avatar.userData.sleeping))
+          // What an agent without work is doing; written only when it changes.
+          const status = label.querySelector<HTMLSpanElement>('.label-idle'), text = translate(String(avatar.userData.idleStatus || 'Idle'))
+          if (status && status.textContent !== text) status.textContent = text
         }
         avatar.getWorldPosition(point.current)
         if (label) {
@@ -102,7 +105,7 @@ function FollowSelected({ selected, overview, avatars, center }: { selected: str
   return null
 }
 
-function Desk({ color, workingRef, theme }: { color: string; workingRef: RefObject<boolean>; theme: OfficePreferences['theme'] }) {
+function Desk({ color, screen, workingRef, theme }: { color: string; screen: string; workingRef: RefObject<boolean>; theme: OfficePreferences['theme'] }) {
   const monitor = useRef<Mesh>(null)
   useFrame(state => {
     // The screen lights up for a task only once its agent is seated at it.
@@ -144,13 +147,18 @@ function Desk({ color, workingRef, theme }: { color: string; workingRef: RefObje
       <mesh><boxGeometry args={[.3, .12, .012]}/><meshStandardMaterial color="#e3e9ed"/></mesh>
       <mesh position={[0, 0, .011]}><boxGeometry args={[.085, .012, .018]}/><meshStandardMaterial color="#6d7b8b"/></mesh>
     </group>)}
-    <mesh position={[0, 1.3, -.59]}><boxGeometry args={[.08, .45, .09]} /><meshStandardMaterial color="#5e6478" /></mesh>
+    {/* Monitor: the screen faces the chair (+Z); the stand sits behind the
+        panel (-Z), from a foot on the desk up to a mount on the panel's back. */}
+    <RoundedBox position={[0, 1.04, -.74]} args={[.46, .022, .28]} radius={.01} castShadow><meshStandardMaterial color="#5e6478" /></RoundedBox>
+    <mesh position={[0, 1.3, -.74]}><boxGeometry args={[.08, .5, .06]} /><meshStandardMaterial color="#5e6478" /></mesh>
+    <mesh position={[0, 1.5, -.7]}><boxGeometry args={[.22, .18, .03]} /><meshStandardMaterial color="#4c5266" /></mesh>
     <RoundedBox position={[0, 1.58, -.64]} args={[1.42, .87, .09]} radius={.045} castShadow><meshStandardMaterial color="#101c2c" /></RoundedBox>
-    <mesh ref={monitor} position={[0, 1.58, -.583]}><planeGeometry args={[1.29, .75]} /><meshStandardMaterial color={color} emissive={color} emissiveIntensity={.3} roughness={.3} /></mesh>
+    <mesh ref={monitor} position={[0, 1.58, -.583]}><planeGeometry args={[1.29, .75]} /><meshStandardMaterial color={screen} emissive={screen} emissiveIntensity={.3} roughness={.3} /></mesh>
     <mesh position={[0, 1.58, -.565]}><planeGeometry args={[1.14, .61]} /><meshStandardMaterial color="#0e2137" emissive="#0c2235" emissiveIntensity={.4} /></mesh>
-    {Array.from({ length: 5 }, (_, i) => <mesh key={i} position={[-.37, 1.78 - .115 * i, -.554]}>
-      <planeGeometry args={[.28 + (i % 3) * .16, .022]} /><meshBasicMaterial color={i === 0 ? color : i === 3 ? '#7b9eba' : '#3d5b79'} />
-    </mesh>)}
+    {/* Code lines are left-aligned inside the inner screen (x -.57..+.57) with a margin. */}
+    {Array.from({ length: 5 }, (_, i) => { const width = .28 + (i % 3) * .16; return <mesh key={i} position={[-.49 + width / 2, 1.78 - .115 * i, -.554]}>
+      <planeGeometry args={[width, .022]} /><meshBasicMaterial color={i === 0 ? screen : i === 3 ? '#7b9eba' : '#3d5b79'} />
+    </mesh> })}
     <RoundedBox position={[0, 1.051, .16]} args={[1, .035, .34]} radius={.022}><meshStandardMaterial color="#2d354a" /></RoundedBox>
     {Array.from({length: 4}, (_,row) => Array.from({length: 8}, (_,col) => <mesh key={`key-${row}-${col}`} position={[-.375 + col * .103, 1.072, .048 + row * .073]}>
       <boxGeometry args={[.078, .008, .05]}/><meshStandardMaterial color="#9eacc0" roughness={.76}/>
@@ -212,16 +220,18 @@ function Workstation({ seat, simulation, selected, pose, onSelect, preferences, 
       : frame.stage === 'idling' && (frame.activity === 'stretch' || frame.activity === 'phone' || frame.activity === 'pet') ? frame.activity : null
     traveler.current.userData.idleActivity = frame.activity ?? ''
     traveler.current.userData.sleeping = napping && frame.seated > .6
+    traveler.current.userData.idleStatus = idleStatus(frame, visit)
   }, -.75)
   return <group position={position}>
-    <Desk color={seat.placement === 'lead' ? '#ba9759' : agent.color} workingRef={atDeskRef} theme={preferences.theme} />
+    {/* Leads get gold desk trim; the screen always glows in the agent's own colour. */}
+    <Desk color={seat.placement === 'lead' ? '#ba9759' : agent.color} screen={agent.color} workingRef={atDeskRef} theme={preferences.theme} />
     <group ref={node => { traveler.current = node; if (node) avatars.current.set(agent.id, node); else avatars.current.delete(agent.id) }} position={[0, 0, STAND_Z]} rotation={[0, Math.PI, 0]}>
       <OfficeAvatar agent={agent} pose={pose} selected={selected} onSelect={onSelect} walkRef={walkRef} gaitRef={gaitRef} seatedRef={seatedRef} coffeeRef={coffeeRef} idleRef={idleRef} atDeskRef={atDeskRef} lieRef={lieRef} animate={preferences.motion !== 'off'}/>
     </group>
   </group>
 }
 
-function Studio({ selected, tasks, schedules, readers, onOpenSchedules, onSelect, now, overlayId, layout, visibleSeats, distantSeats, overview, preferences }: { selected: AgentId; tasks: OfficeTask[]; schedules: OfficeSchedule[]; readers: KnowledgeReader[]; onOpenSchedules: () => void; onSelect: (value: AgentId) => void; now: number; overlayId: string; layout: OfficeLayout; visibleSeats: Seat[]; distantSeats: Seat[]; overview: boolean; preferences: OfficePreferences }) {
+function Studio({ translate, selected, tasks, schedules, readers, onOpenSchedules, onSelect, now, overlayId, layout, visibleSeats, distantSeats, overview, preferences }: { selected: AgentId; tasks: OfficeTask[]; schedules: OfficeSchedule[]; readers: KnowledgeReader[]; onOpenSchedules: () => void; onSelect: (value: AgentId) => void; now: number; overlayId: string; layout: OfficeLayout; visibleSeats: Seat[]; distantSeats: Seat[]; overview: boolean; preferences: OfficePreferences; translate: (text: string) => string }) {
   const { size } = useThree()
   const avatars = useRef(new Map<string, Group>())
   const agents = useAgents()
@@ -273,7 +283,7 @@ function Studio({ selected, tasks, schedules, readers, onOpenSchedules, onSelect
     <OfficePetsView pets={pets}/>
     <ScheduleBoard layout={layout} schedules={schedules} agents={agents} accent={preferences.accent} onOpen={onOpenSchedules}/>
     <KnowledgeGraph layout={layout} readers={readers} agents={agents} accent={preferences.accent} animate={preferences.motion !== 'off'}/>
-    <BadgeProjector overlayId={overlayId} seats={visibleSeats} sectors={layout.sectors} avatars={avatars} board={board} knowledge={knowledge}/>
+    <BadgeProjector translate={translate} overlayId={overlayId} seats={visibleSeats} sectors={layout.sectors} avatars={avatars} board={board} knowledge={knowledge}/>
     <OrthographicCamera key={`${cameraKey}-camera`} makeDefault position={[target[0] + 15, target[1] + 17, target[2] + 19]} zoom={overview ? overviewZoom : 42} near={.1} far={Math.max(250, layout.width + layout.depth + 100)} />
     <OrbitControls key={`${cameraKey}-controls`} makeDefault target={target} minPolarAngle={.25} maxPolarAngle={1.46} enablePan enableDamping dampingFactor={.08} minZoom={overview ? Math.min(2, overviewZoom) : 12} maxZoom={165} />
     <FollowSelected key={`${cameraKey}-${center[0]}-${center[2]}`} selected={selected} overview={overview} avatars={avatars} center={center}/>
@@ -353,7 +363,7 @@ export default function OfficeScene({ selected, tasks, schedules = [], onOpenSch
   }, [tasks, now])
   return <div className="office-3d-shell" data-office-theme={preferences.theme} data-office-motion={effectivePreferences.motion} data-layout-transition={presentation.phase} aria-busy={presentation.phase !== 'ready'}>
     <Canvas shadows dpr={[1, 1.5]} gl={{ antialias: true, alpha: false }} onPointerMissed={() => { }}>
-      <Studio key={presentation.key} selected={selected} tasks={tasks} schedules={schedules} readers={readers} onOpenSchedules={() => onOpenSchedules(null)} onSelect={onSelect} now={now} overlayId={overlayId} layout={layout} visibleSeats={visibleSeats} distantSeats={distantSeats} overview={overview} preferences={effectivePreferences}/>
+      <Studio key={presentation.key} translate={tr} selected={selected} tasks={tasks} schedules={schedules} readers={readers} onOpenSchedules={() => onOpenSchedules(null)} onSelect={onSelect} now={now} overlayId={overlayId} layout={layout} visibleSeats={visibleSeats} distantSeats={distantSeats} overview={overview} preferences={effectivePreferences}/>
     </Canvas>
     {presentation.phase === 'closing' && <div className="scene-layout-loading" role="status">{tr('Loading 3D office…')}</div>}
     <div id={overlayId} className={`scene-phase-overlay${overview ? ' is-overview' : ''}`} aria-label={tr('Current phase')}>
@@ -361,8 +371,8 @@ export default function OfficeScene({ selected, tasks, schedules = [], onOpenSch
         const task = selectAgentTask(tasks, agent.id, now)
         const pose = resolveAgentPose(task, now)
         const text = pose === 'celebrating' ? statusName.completed : pose === 'error' ? statusName[task?.status || 'failed'] : phaseName[pose]
-        return <span key={agent.id} className={`scene-phase-label phase-${pose}${overview && pose === 'idle' ? ' overview-idle' : ''}`} data-agent={agent.id} data-pose={pose}>
-          <i aria-hidden="true" /><span className="label-phase">{tr(text)}</span><span className="label-away">{tr('Heading to desk')}</span><span className="label-sleep"><Moon size={10} aria-hidden="true"/>{tr('Sleeping')}</span>{scheduledAgents.has(agent.id) && <CalendarClock className="label-schedule" size={10} aria-label="Has scheduled tasks"/>}
+        return <span key={agent.id} className={`scene-phase-label phase-${pose}`} data-agent={agent.id} data-pose={pose}>
+          <i aria-hidden="true" /><span className="label-phase">{tr(text)}</span><span className="label-idle"/><span className="label-away">{tr('Heading to desk')}</span><span className="label-sleep"><Moon size={10} aria-hidden="true"/>{tr('Sleeping')}</span>{scheduledAgents.has(agent.id) && <CalendarClock className="label-schedule" size={10} aria-label="Has scheduled tasks"/>}
         </span>
       })}
       <button type="button" className="scene-board-label" data-board="schedule" onClick={() => onOpenSchedules(null)}

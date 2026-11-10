@@ -141,12 +141,12 @@ try {
   await count(20)
   await phases(20)
   const overview = '[aria-label="Show entire office"]'
-  await page.waitForFunction(selector => document.querySelector(selector)?.disabled === true, {}, overview)
+  await page.waitForFunction(selector => !document.querySelector(selector), {}, overview)
   await page.$eval('.crew-card:last-child', element => element.click())
-  await page.waitForFunction(selector => document.querySelector(selector)?.disabled === false, {}, overview)
+  await page.waitForFunction(selector => Boolean(document.querySelector(selector)), {}, overview)
   await (await page.$('.scene-frame')).screenshot({ path: resolve('work/office-workstation-focus.png') })
   await page.click(overview)
-  await page.waitForFunction(selector => document.querySelector(selector)?.disabled === true, {}, overview)
+  await page.waitForFunction(selector => !document.querySelector(selector), {}, overview)
   await mkdir('work', { recursive: true })
   await page.$eval('.scene-frame', async element => { element.dataset.testReady = 'true' })
   await (await page.$('.scene-frame')).screenshot({ path: resolve('work/office-dynamic-20.png') })
@@ -161,9 +161,9 @@ try {
   await phases(50)
   await (await page.$('.scene-frame')).screenshot({ path: resolve('work/office-dynamic-80.png') })
   await page.$eval('.crew-card:last-child', element => element.click())
-  await page.waitForFunction(selector => document.querySelector(selector)?.disabled === false, {}, overview)
+  await page.waitForFunction(selector => Boolean(document.querySelector(selector)), {}, overview)
   await page.click(overview)
-  await page.waitForFunction(selector => document.querySelector(selector)?.disabled === true, {}, overview)
+  await page.waitForFunction(selector => !document.querySelector(selector), {}, overview)
   const renderer = await page.$eval('canvas', canvas => {
     const webgl = canvas.getContext('webgl2')
     return { webgl: Boolean(webgl), lost: webgl?.isContextLost(), width: canvas.width }

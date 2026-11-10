@@ -36,10 +36,8 @@ footer{padding:20px 37px;display:flex;justify-content:space-between;gap:10px;bor
 @media(max-width:540px){.office-options{grid-template-columns:1fr}}
 .scene-view-btns{position:absolute;right:15px;bottom:14px;z-index:2;display:flex;gap:8px}
 .scene-overview-btn{display:grid;place-items:center;width:37px;height:37px;border:1px solid #ffffff36;border-radius:9px;background:#16263edb;color:#e6f2ff;cursor:pointer;backdrop-filter:blur(8px);transition:background .15s ease}
-.scene-overview-btn:hover:not(:disabled){background:#304b70}
-.scene-overview-btn:disabled{opacity:.45;cursor:default}
-.scene-phase-label.overview-idle{display:none}
-@media(max-width:740px){.scene-hint{right:104px;white-space:normal;line-height:1.35}.scene-view-btns{right:10px;bottom:10px;gap:6px}}
+.scene-overview-btn:hover{background:#304b70}
+@media(max-width:740px){.scene-hint{right:59px;white-space:normal;line-height:1.35}.scene-frame:has(.scene-view-btns>:nth-child(2)) .scene-hint{right:104px}.scene-view-btns{right:10px;bottom:10px;gap:6px}}
 .scene-phase-overlay{position:absolute;inset:0;overflow:hidden;pointer-events:none}
 .scene-phase-label{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;border:1px solid #536a8d;background:#16243bea;color:#e3efff;box-shadow:0 4px 16px #020d2280;padding:5px 9px;border-radius:8px;font:700 10px 'DM Sans',system-ui,sans-serif;letter-spacing:.15px;user-select:none}
 .scene-phase-overlay .scene-phase-label{position:absolute;transform:translate(-50%,-50%);left:-100px;top:-100px}
@@ -52,7 +50,12 @@ footer{padding:20px 37px;display:flex;justify-content:space-between;gap:10px;bor
 .scene-phase-label.phase-celebrating i{background:#68e4a7}
 .scene-phase-label.phase-error{border-color:#cd6d82;color:#ffe9ed}
 .scene-phase-label.phase-error i{background:#ff7894}
-.scene-phase-label.phase-idle{opacity:.75}
+.scene-phase-label.phase-idle{opacity:.9}
+/* Agents without work always show what they are doing (text set per frame from the simulation). */
+.scene-phase-label .label-idle{display:none}
+.scene-phase-label.phase-idle .label-phase{display:none}
+.scene-phase-label.phase-idle .label-idle{display:inline}
+.scene-phase-label:is(.phase-thinking,.phase-coding,.phase-researching,.phase-finishing):not([data-at-desk="true"]) .label-idle{display:none}
 /* Work phases (agentBehavior WORK_POSES) read "Heading to desk" until the avatar is seated at its desk. */
 .scene-phase-label .label-away{display:none}
 .scene-phase-label:is(.phase-thinking,.phase-coding,.phase-researching,.phase-finishing):not([data-at-desk="true"]) .label-phase{display:none}
@@ -60,7 +63,7 @@ footer{padding:20px 37px;display:flex;justify-content:space-between;gap:10px;bor
 .scene-phase-label:is(.phase-thinking,.phase-coding,.phase-researching,.phase-finishing):not([data-at-desk="true"]) i{background:#a4b5ce}
 /* An idle agent napping on the couch reads "Sleeping" (shown even in overview and on narrow screens). */
 .scene-phase-label .label-sleep{display:none;align-items:center;gap:4px}
-.scene-phase-label.phase-idle[data-sleeping="true"] .label-phase{display:none}
+.scene-phase-label.phase-idle[data-sleeping="true"] .label-idle{display:none}
 .scene-phase-label.phase-idle[data-sleeping="true"] .label-sleep{display:inline-flex}
 .scene-phase-overlay .scene-phase-label.phase-idle[data-sleeping="true"]{display:inline-flex;opacity:1;border-color:#7b7fc4;background:#1f2350ea;color:#e3e4ff}
 .scene-phase-label.phase-idle[data-sleeping="true"] i{background:#9ea2ff}
@@ -117,14 +120,14 @@ footer{padding:20px 37px;display:flex;justify-content:space-between;gap:10px;bor
 .scene-sector-label i{width:8px;height:8px;border-radius:50%}
 .scene-phase-overlay.is-overview .scene-sector-label{padding:4px 6px;gap:4px;font-size:8px;font-weight:700;transform:translate(-50%,-50%) scale(.84);background:#14263ad9}
 .scene-phase-overlay.is-overview .scene-sector-label i{width:6px;height:6px}
-.scene-phase-label.phase-idle{opacity:.58}
+.scene-phase-label.phase-idle{opacity:.9}
 .modal-agent-list{grid-template-columns:repeat(auto-fit,minmax(105px,1fr));max-height:190px;overflow-y:auto}
 .crew-grid{grid-template-columns:repeat(auto-fit,minmax(132px,1fr));max-height:265px;overflow-y:auto;padding:2px 4px 5px 2px}
 .side-team{max-height:300px;overflow-y:auto}
 .office-sector-colors{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:12px 0 16px}
 .office-sector-colors label{min-width:0;display:flex;align-items:center;justify-content:space-between;gap:9px;padding:8px 10px;border-radius:9px;border:1px solid #e1e7f0;background:#f8fafc;font-size:11px;font-weight:700;color:#42536c}
 .office-sector-colors input[type=color]{width:36px;height:28px;min-width:36px;cursor:pointer;border:0;padding:1px;background:transparent}
-@media(max-width:740px){.team-intro{align-items:flex-start}.team-intro .primary-btn{font-size:11px;padding:11px}.agents-grid{grid-template-columns:1fr}.crew-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.scene-sector-label{font-size:9px}.scene-phase-label.phase-idle{display:none}}
+@media(max-width:740px){.team-intro{align-items:flex-start}.team-intro .primary-btn{font-size:11px;padding:11px}.agents-grid{grid-template-columns:1fr}.crew-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.scene-sector-label{font-size:9px}}
 @media(max-width:1050px) and (min-width:741px){
 .ops .agent-inspector{grid-column:1;grid-row:2/4}
 .ops .feed-head{grid-column:2;grid-row:2}
@@ -401,3 +404,14 @@ select:focus-visible{outline:3px solid #9a96f2;outline-offset:2px}
 
 /* Full-screen live office: the frame fills the screen and the canvas resizes with it. */
 .scene-frame:fullscreen{height:100%;width:100%;border:0;border-radius:0}
+
+/* Desktop: the Operations column never outgrows the live office beside it.
+   contain:size keeps it out of the grid row's height; it then stretches to that
+   height and the task feed takes the remaining space, scrolling inside. */
+@media(min-width:1051px){
+.workspace-grid{align-items:stretch}
+.workspace-grid>.ops{contain:size;display:flex;flex-direction:column;overflow-y:auto;scrollbar-width:thin}
+.workspace-grid>.ops>*{flex:none}
+.workspace-grid>.ops>.feed-list{flex:1 1 0;min-height:140px;max-height:none}
+.workspace-grid>.ops .execution-log{max-height:150px}
+}

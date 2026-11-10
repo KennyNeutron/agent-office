@@ -13,7 +13,7 @@ import { isSleeping } from '../src/scene/officeSimulation.ts'
 import { PET_FACING } from '../src/scene/officeMotion.ts'
 import { activeReaders, HOLOGRAM_RADIUS, isKnowledgeEvent, KNOWLEDGE_RADIUS, KNOWLEDGE_RECENT_MS, knowledgeGeometry, knowledgeGraphPosition, knowledgeReaders } from '../src/scene/knowledgeGraphLayout.ts'
 import { RECEPTION_PROPS } from '../src/scene/timepieceLayout.ts'
-import { presentedPose, WORK_POSES } from '../src/scene/agentBehavior.ts'
+import { idleStatus, presentedPose, WORK_POSES } from '../src/scene/agentBehavior.ts'
 
 const departments = ['architecture', 'engineering', 'design', 'quality', 'research', 'operations', 'security', 'data', 'general']
 
@@ -853,4 +853,25 @@ test('pets visit agents, get petted, keep a napping agent company and rest in be
   stepOfficePets(pets, layout, simulation, ids, .05, 'off')
   for (const pet of pets) { assert.equal(pet.stage, 'resting'); assert.deepEqual(pet.position, pet.bed) }
   assert.deepEqual(Object.keys(PET_BEDS), ['dog', 'cat'])
+})
+
+test('every idle agent always has a status describing what it is doing', () => {
+  const layout = makeOfficeLayout(DEFAULT_AGENTS)
+  const ids = new Set(layout.seats.map(seat => seat.agent.id))
+  const simulation = reconcileOfficeSimulation(layout)
+  const seen = new Set()
+  for (let i = 0; i < 24000; i++) {
+    stepOfficeSimulation(simulation, ids, new Set(), .05, 'lively')
+    for (const [, actor] of simulation) {
+      const visit = actor.state.excursion >= 0 ? actor.plan.excursions[actor.state.excursion].activity : null
+      const status = idleStatus(actor.state, visit)
+      assert.ok(typeof status === 'string' && status.length, 'a status is always available')
+      if (i > 200) assert.notEqual(status, 'Idle', `stage ${actor.state.stage} should describe the activity`)
+      if (isSleeping(actor)) assert.equal(status, 'Sleeping')
+      seen.add(status)
+    }
+  }
+  for (const status of ['Browsing at desk', 'Watching TV', 'Playing darts', 'Heading to desk']) assert.ok(seen.has(status), `expected "${status}" to appear`)
+  assert.equal(idleStatus({ stage: 'lounging', activity: 'chess', alone: 3 }, 'chess'), 'Waiting for an opponent')
+  assert.equal(idleStatus({ stage: 'idling', activity: 'phone', alone: 0 }, null), 'On the phone')
 })
