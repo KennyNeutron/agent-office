@@ -85,7 +85,7 @@ async function unitRegressions() {
 const providers = [
   { id: 'codex', name: 'Codex CLI', available: false },
   { id: 'claude', name: 'Claude Code', available: false },
-  { id: 'gemini', name: 'Gemini CLI', available: false },
+  { id: 'antigravity', name: 'Antigravity CLI', available: false },
 ]
 const baseState = () => ({ connected: true, codexAvailable: false, defaultWorkspace: 'C:\\office-smoke',
   providers: structuredClone(providers), agents: structuredClone(DEFAULT_AGENTS), tasks: [] })
@@ -161,7 +161,7 @@ async function flowRegressions(browser) {
   let state = baseState(), initial = true, invalidState = false, reply = 'error'
   const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
   const task = (id, status = 'completed', agentId = 'nova') => ({ id, agentId, agentName: agentId === 'nova' ? 'Nova' : agentId,
-    provider: 'gemini', prompt: 'Mission control', workspace: 'C:\\office-smoke', status, phase: status === 'running' ? 'coding' : 'idle',
+    provider: 'antigravity', prompt: 'Mission control', workspace: 'C:\\office-smoke', status, phase: status === 'running' ? 'coding' : 'idle',
     createdAt: '2026-10-01T12:00:00.000Z', updatedAt: '2026-10-01T12:01:00.000Z', finishedAt: status === 'running' ? null : '2026-10-01T12:01:00.000Z',
     lastMessage: '', threadId: null, events: [{ id: id + '-e', kind: 'info', at: '2026-10-01T12:01:00.000Z', message: 'Synthetic activity' }] })
   const response = body => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
@@ -204,7 +204,7 @@ async function flowRegressions(browser) {
   await page.type('#prompt', 'Mission control')
   assert.equal(await page.$eval('.modal-bottom .primary-btn', item => item.disabled), true, 'Unavailable stored provider must block launch')
   assert.match(await page.$eval('#task-blocked', item => item.textContent), /Choose an available/)
-  await page.select('#task-provider', 'gemini')
+  await page.select('#task-provider', 'antigravity')
   assert.equal(await page.$eval('.modal-bottom .primary-btn', item => item.disabled), false)
   await page.evaluate(() => window.__officeStreams.filter(stream => !stream.closed).forEach(stream => stream.onerror?.(new Event('error'))))
   await page.waitForFunction(() => document.querySelector('.modal-bottom .primary-btn')?.disabled, { timeout: 5000 })
@@ -234,7 +234,7 @@ async function flowRegressions(browser) {
   await page.click('.modal-bottom .primary-btn')
   await page.waitForFunction(() => !document.querySelector('dialog[open]'))
   assert.match(await page.$eval('.execution-inspector .pill-status', item => item.textContent), /Completed/, 'Late launch response must preserve a newer completion event')
-  assert.equal(await page.$eval('.execution-prompt', item => item.textContent), 'Gemini CLI · Mission control')
+  assert.equal(await page.$eval('.execution-prompt', item => item.textContent), 'Antigravity CLI · Mission control')
   await page.click('.crew-card')
   assert.equal(await page.$('.execution-prompt'), null, 'Agent selection must clear the previous task')
 
@@ -443,7 +443,7 @@ try {
   assert.match(await page.$eval('.task-tile strong', el => el.textContent), /^Build the dashboard/i, 'Bundled demo prompts stay in English')
   await page.$eval('.intro .primary-btn', el => el.click())
   const providerOptions = await page.$$eval('#task-provider option', items => items.map(item => item.value))
-  assert.deepEqual(providerOptions, ['codex', 'claude', 'gemini'], 'Expected three selectable AI providers')
+  assert.deepEqual(providerOptions, ['codex', 'claude', 'antigravity'], 'Expected three selectable AI providers')
   await page.select('#task-provider', 'claude')
   assert.equal(await page.$eval('#task-provider', el => el.value), 'claude', 'Claude must be selectable')
   await page.select('#task-provider', 'codex')

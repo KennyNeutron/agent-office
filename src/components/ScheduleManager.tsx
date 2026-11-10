@@ -11,7 +11,7 @@ import { upcomingSchedules, formatScheduleTime, formatUntil } from './scheduleDi
 const PROVIDERS: ProviderInfo[] = [
   { id: 'codex', name: 'Codex CLI', available: false },
   { id: 'claude', name: 'Claude Code', available: false },
-  { id: 'gemini', name: 'Gemini CLI', available: false },
+  { id: 'antigravity', name: 'Antigravity CLI', available: false },
 ];
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const UNITS = { minutes: 1, hours: 60, days: 1440 } as const;
@@ -101,7 +101,7 @@ export function ScheduleManager({ schedules, tasks, initialAgent, providers, def
     if (!draft || formError || busy) return;
     const input: ScheduleInput = {
       title: draft.title.trim(), agentId: draft.agentId, prompt: draft.prompt.trim(), provider: draft.provider,
-      permissionMode: draft.provider === 'gemini' && draft.permissionMode === 'approve-for-me' ? 'restricted' : draft.permissionMode,
+      permissionMode: draft.provider === 'antigravity' && draft.permissionMode === 'approve-for-me' ? 'restricted' : draft.permissionMode,
       workspace: demo ? 'Demo workspace' : draft.workspace, repeat: draft.repeat, enabled: draft.enabled,
       runAt: draft.repeat === 'once' || draft.repeat === 'interval' ? new Date(draft.runAt).toISOString() : null,
       intervalMinutes: draft.repeat === 'interval' ? minutes : null,
@@ -236,7 +236,7 @@ export function ScheduleManager({ schedules, tasks, initialAgent, providers, def
           <label htmlFor="schedule-permissions">AGENT PERMISSIONS</label>
           <select id="schedule-permissions" className="language-picker" value={draft.permissionMode} onChange={event => update({ permissionMode: event.target.value as PermissionMode })}>
             <option value="restricted">Restricted</option>
-            <option value="approve-for-me" disabled={draft.provider === 'gemini'}>Approve for me</option>
+            <option value="approve-for-me" disabled={draft.provider === 'antigravity'}>Approve for me</option>
             <option value="full-access">Full Access</option>
           </select>
           {draft.permissionMode === 'full-access' && <p className="mission-permissions-help">Every scheduled run can edit files outside the project and run commands with your account permissions, without anyone watching.</p>}

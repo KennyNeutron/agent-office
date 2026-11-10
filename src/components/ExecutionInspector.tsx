@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Activity, AlertCircle, Clock3, Cpu, History, Timer } from 'lucide-react';
 import { useLanguage } from '../locales/i18n';
-import { displayEvent, displayPrompt, statusName, phaseName } from './taskDisplay';
+import { displayEvent, displayPrompt, statusName, phaseName, providerName } from './taskDisplay';
 import { Dot } from './Avatar';
 import type { OfficeTask } from '../types';
 
@@ -39,7 +39,7 @@ export function ExecutionInspector({ task }: { task?: OfficeTask }) {
       {task && <span className={`pill-status ${task.status}`}><Dot status={task.status}/>{tr(statusName[task.status])}</span>}
     </div>
     {!task ? <p className="execution-empty">{tr('No task assigned yet.')}</p> : <>
-      <p className="execution-prompt"><strong>{task.provider === 'claude' ? 'Claude Code' : task.provider === 'gemini' ? 'Gemini CLI' : 'Codex CLI'}</strong> · {displayPrompt(task, tr)}</p>
+      <p className="execution-prompt"><strong>{providerName(task.provider)}</strong> · {displayPrompt(task, tr)}</p>
       <div className="execution-stats">
         <div><Cpu size={15}/><span>{tr('Current phase')}</span><strong>{tr(ended ? phaseName.idle : phaseName[task.phase])}</strong></div>
         <div><Timer size={15}/><span>{tr('Elapsed time')}</span><strong className="mono-numbers">{durationText(elapsedSeconds(task, now))}</strong></div>

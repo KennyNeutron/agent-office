@@ -8,6 +8,8 @@ import { departmentDecor } from '../src/scene/officeDecor.ts'
 import { DEFAULT_OFFICE_PREFERENCES, normalizeOfficePreferences } from '../src/scene/officePreferences.ts'
 import { heldSpot, layoutGeometryKey, partnerOf, planForSeat, routeForSeat, reconcileOfficeSimulation, stepOfficeSimulation, tvWatched } from '../src/scene/officeSimulation.ts'
 import { boardSpots, chessSeats, COFFEE_TABLE, dartsSpots, GAMES, gamesRoom, pingPongSpots, SOFA, tvSeats } from '../src/scene/loungeLayout.ts'
+import { activeReaders, HOLOGRAM_RADIUS, isKnowledgeEvent, KNOWLEDGE_RADIUS, KNOWLEDGE_RECENT_MS, knowledgeGeometry, knowledgeGraphPosition, knowledgeReaders } from '../src/scene/knowledgeGraphLayout.ts'
+import { RECEPTION_PROPS } from '../src/scene/timepieceLayout.ts'
 
 const departments = ['architecture', 'engineering', 'design', 'quality', 'research', 'operations', 'security', 'data', 'general']
 
@@ -623,4 +625,51 @@ test('reception desk clock and wall calendar sit on their furniture without inte
   assert.ok(WALL_CALENDAR.y + WALL_CALENDAR.height / 2 < wall.y + wall.height / 2 && Math.abs(WALL_CALENDAR.x) + WALL_CALENDAR.width / 2 < wall.width / 2, 'calendar fits on the wall')
   assert.equal(clockText(new Date(2030, 0, 7, 9, 5)), '09:05')
   assert.deepEqual(calendarText(new Date(2030, 0, 7)), { month: 'JANUARY', day: '7', weekday: 'Monday' })
+})
+
+test('knowledge graph pedestal stands clear of reception, the corridor, desks and every walking route', () => {
+  for (const count of [1, 3, 4, 20, 60]) for (const spacing of ['compact', 'regular', 'spacious']) {
+    const layout = makeOfficeLayout(makeTeam(count), spacing)
+    const [x, , z] = knowledgeGraphPosition(layout)
+    const reception = layout.amenities.find(item => item.id === 'reception')
+    const clear = KNOWLEDGE_RADIUS + .3
+    assert.ok(x - KNOWLEDGE_RADIUS > reception.x + RECEPTION_PROPS.counterTop.width / 2 + .3, `pedestal touches the reception counter (${count}/${spacing})`)
+    assert.ok(z - KNOWLEDGE_RADIUS > reception.z + RECEPTION_PROPS.backWall.z + RECEPTION_PROPS.backWall.depth / 2, `pedestal is hidden behind the reception wall (${count}/${spacing})`)
+    assert.ok(layout.spineX - x > clear + .5, `pedestal crowds the central corridor (${count}/${spacing})`)
+    for (const seat of layout.seats) assert.ok(Math.hypot(seat.position[0] - x, seat.position[2] - z) > 3, 'pedestal is inside a team bay')
+    layout.seats.forEach((seat, ordinal) => {
+      for (const route of [routeFor(layout, seat, ordinal), ...planForSeat(layout, seat, ordinal).excursions]) {
+        for (let segment = 0; segment < route.points.length - 1; segment++) {
+          const [ax, az] = route.points[segment], [bx, bz] = route.points[segment + 1]
+          for (let sample = 0; sample <= 24; sample++) {
+            const t = sample / 24
+            assert.ok(Math.hypot(ax + (bx - ax) * t - x, az + (bz - az) * t - z) > clear, `${route.spot || 'desk'} route walks through the knowledge graph (${count}/${spacing})`)
+          }
+        }
+      }
+    })
+  }
+})
+
+test('knowledge graph lights up only for running tasks that recently queried graphify', () => {
+  for (const message of ['Claude used mcp__graphify__query_graph.', 'Antigravity used query_graph.', 'Starting graphify tool: graphify_find', 'Antigravity used graphify__graph_stats.'])
+    assert.equal(isKnowledgeEvent(message), true, message)
+  for (const message of ['Claude used Grep.', 'Antigravity used search.', 'Agent replied: I used graphify tool: query_graph.', 'Claude replied: Claude used graphify.', 'Starting command: rg graphify'])
+    assert.equal(isKnowledgeEvent(message), false, message)
+  const now = Date.parse('2026-11-10T12:00:00Z')
+  const at = offset => new Date(now - offset).toISOString()
+  const event = (message, offset) => ({ id: message, at: at(offset), kind: 'info', message })
+  const tasks = [
+    { agentId: 'atlas', status: 'running', events: [event('Claude used mcp__graphify__search.', 5_000), event('Claude used Edit.', 1_000)] },
+    { agentId: 'nova', status: 'running', events: [event('Antigravity used query_graph.', KNOWLEDGE_RECENT_MS + 1_000)] },
+    { agentId: 'orbit', status: 'completed', events: [event('Claude used mcp__graphify__search.', 500)] },
+    { agentId: 'pixel', status: 'running', events: [event('Claude used Read.', 100)] },
+  ]
+  const readers = knowledgeReaders(tasks)
+  assert.deepEqual(readers.map(reader => reader.agentId), ['atlas', 'nova'])
+  assert.deepEqual(activeReaders(readers, now).map(reader => reader.agentId), ['atlas'])
+  const { nodes, edges } = knowledgeGeometry()
+  assert.equal(nodes.length, 18)
+  assert.ok(nodes.every(node => Math.hypot(...node) <= HOLOGRAM_RADIUS + 1e-9), 'nodes stay inside the hologram radius')
+  assert.ok(edges.length >= nodes.length && edges.every(([a, b]) => a < b && b < nodes.length))
 })

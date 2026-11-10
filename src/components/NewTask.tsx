@@ -10,7 +10,7 @@ import { isAbsoluteWorkspace } from './dataFlow';
 const defaultProviders: ProviderInfo[] = [
   { id: 'codex', name: 'Codex CLI', available: false },
   { id: 'claude', name: 'Claude Code', available: false },
-  { id: 'gemini', name: 'Gemini CLI', available: false },
+  { id: 'antigravity', name: 'Antigravity CLI', available: false },
 ];
 
 export function NewTask({ agent, setAgent, workspace, setWorkspace, close, start, busy, demo, provider, setProvider, providers, online, agentBusy, error }: {
@@ -65,7 +65,7 @@ export function NewTask({ agent, setAgent, workspace, setWorkspace, close, start
           onChange={event => setPermissionMode(event.target.value as PermissionMode)}>
           <option value="restricted">{tr('Restricted')}</option>
           <option value="ask" disabled>{tr('Ask for approval (requires an interactive session)')}</option>
-          <option value="approve-for-me" disabled={provider === 'gemini'}>{tr('Approve for me')}</option>
+          <option value="approve-for-me" disabled={provider === 'antigravity'}>{tr('Approve for me')}</option>
           <option value="full-access">{tr('Full Access')}</option>
         </select>
         <p id="mission-permissions-help" className="mission-permissions-help">

@@ -33,26 +33,7 @@ export function parseMessage(task, data, addEvent) {
     }
     return
   }
-  if (task.provider === 'gemini') {
-    if (data.type === 'init' && text(data.session_id)) task.threadId = data.session_id
-    if (data.type === 'tool_use' && text(data.tool_name)) {
-      task.phase = /search|web/i.test(data.tool_name) ? 'researching' : 'coding'
-      addEvent(task, `Gemini used ${shrink(data.tool_name)}.`)
-    }
-    if (data.type === 'message' && data.role === 'assistant' && text(data.content)) {
-      // Streaming Gemini messages are chunks, not complete answers.
-      task.lastMessage = shrink(data.delta ? (task.lastMessage || '') + data.content : data.content, 500)
-      addEvent(task, 'Gemini replied: ' + shrink(data.content, 140))
-    }
-    if (data.type === 'error') addEvent(task, shrink(data.message || 'Gemini CLI reported an error.', 500), 'error')
-    if (data.type === 'result') {
-      message(data.response)
-      if (object(data.stats)) task.usage = data.stats
-      if (data.status === 'error' || data.error) failure(text(data.error?.message) || text(data.error) || 'Gemini CLI failed.')
-      task.phase = 'finishing'; task.outputComplete = true
-    }
-    return
-  }
+  if (task.provider === 'antigravity') { parseAntigravity(task, data, addEvent, message, failure); return }
   if (data.type === 'thread.started' && text(data.thread_id)) task.threadId = data.thread_id
   else if (data.type === 'turn.started') { task.phase = 'thinking'; addEvent(task, 'Codex started the task.') }
   else if (['item.started', 'item.updated', 'item.completed'].includes(data.type)) {
@@ -66,6 +47,9 @@ export function parseMessage(task, data, addEvent) {
       if (data.type !== 'item.updated') addEvent(task, `${verb} file changes.`)
     } else if (item.type === 'agent_message' && data.type === 'item.completed') {
       message(item.text); addEvent(task, 'Agent replied: ' + shrink(item.text, 140))
+    } else if (item.type === 'mcp_tool_call' && data.type !== 'item.updated') {
+      task.phase = 'researching'
+      addEvent(task, `${verb} ${shrink(text(item.server) || 'MCP')} tool: ${shrink(text(item.tool) || 'unknown')}`)
     } else if (item.type === 'web_search' && data.type !== 'item.updated') {
       task.phase = 'researching'; addEvent(task, `${verb} web search.`)
     } else if (item.type === 'reasoning' && data.type === 'item.started') task.phase = 'thinking'
@@ -76,6 +60,44 @@ export function parseMessage(task, data, addEvent) {
     failure(text(data.error?.message) || text(data.message) || 'Codex did not complete the task.')
   } else if (data.type === 'error') {
     addEvent(task, shrink(data.error?.message || data.message || 'Codex reported a temporary problem.', 500), 'error')
+  }
+}
+
+// Antigravity CLI (agy) stream-json: {event:'init'|'step_update'|'result', [event]: payload}.
+// Per-step scratch state lives outside the task so it is never persisted.
+const agyState = new WeakMap()
+const AGY_TERMINAL = ['DONE', 'ERROR', 'CANCELED']
+function parseAntigravity(task, data, addEvent, message, failure) {
+  const payload = object(data[data.event]) ? data[data.event] : {}
+  if (!agyState.has(task)) agyState.set(task, { tools: new Set(), replies: new Map() })
+  const state = agyState.get(task)
+  if (data.event === 'init' && text(data.conversation_id)) task.threadId = data.conversation_id
+  if (data.event === 'step_update') {
+    const step = payload.step_index, done = AGY_TERMINAL.includes(payload.state)
+    if (payload.step_type === 'tool' && text(payload.tool_name)) {
+      task.phase = /search|browser|web|read_url/i.test(payload.tool_name) ? 'researching' : 'coding'
+      // Steps report ACTIVE then DONE/ERROR; log each tool once.
+      if (!state.tools.has(step)) { state.tools.add(step); addEvent(task, `Antigravity used ${shrink(payload.tool_name)}.`) }
+      const error = object(payload.tool_info?.error) ? payload.tool_info.error : null
+      if (payload.state === 'ERROR' && error) addEvent(task, shrink(`${payload.tool_name} failed: ${text(error.message) || text(error.type) || 'tool error'}`, 400), 'error')
+    } else if (payload.step_type === 'agent_response') {
+      // Replies may stream as ACTIVE text deltas; log the whole reply once it is done.
+      const reply = (state.replies.get(step) || '') + (text(payload.text_delta) ? payload.text_delta : '')
+      if (!done) state.replies.set(step, reply)
+      else {
+        state.replies.delete(step)
+        if (reply.trim()) { message(reply); addEvent(task, 'Antigravity replied: ' + shrink(reply.trim(), 140)) }
+      }
+      if (!done) task.phase = 'thinking'
+    }
+  }
+  if (data.event === 'result') {
+    message(payload.response)
+    if (object(payload.usage)) task.usage = payload.usage
+    const denied = Array.isArray(payload.denied_actions) ? [...new Set(payload.denied_actions.map(item => text(item?.display_name) || text(item?.action)).filter(Boolean))] : []
+    if (denied.length) addEvent(task, shrink(`Antigravity CLI skipped actions that required approval (${denied.join(', ')}). Check the agent reply for work that could not run.`, 350), 'error')
+    if (payload.status !== 'SUCCESS') failure(text(payload.error?.message) || text(payload.error) || `Antigravity CLI finished with status ${shrink(text(payload.status) || 'unknown', 40)}.`)
+    task.phase = 'finishing'; task.outputComplete = true
   }
 }
 

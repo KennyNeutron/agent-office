@@ -14,15 +14,15 @@ function directEntry(bin, id, platform) {
   if (!/\.(cmd|bat)$/i.test(bin)) return usableFile(bin, platform) ? bin : null
   const entries = id === 'claude'
     ? [join('@anthropic-ai', 'claude-code', 'bin', 'claude.exe'), join('@anthropic-ai', 'claude-code', 'cli.js')]
-    : id === 'gemini' ? [join('@google', 'gemini-cli', 'dist', 'index.js')]
-      : [join('@openai', 'codex', 'bin', 'codex.js')]
+    : id === 'codex' ? [join('@openai', 'codex', 'bin', 'codex.js')]
+      : [] // agy ships as a native executable, never an npm .cmd shim.
   return entries.map(entry => join(dirname(bin), 'node_modules', entry)).find(path => usableFile(path, platform)) || null
 }
 
 export const PROVIDERS = [
-  { id: 'codex', name: 'Codex CLI', env: 'CODEX_BIN' },
-  { id: 'claude', name: 'Claude Code', env: 'CLAUDE_BIN' },
-  { id: 'gemini', name: 'Gemini CLI', env: 'GEMINI_BIN' },
+  { id: 'codex', name: 'Codex CLI', env: 'CODEX_BIN', command: 'codex' },
+  { id: 'claude', name: 'Claude Code', env: 'CLAUDE_BIN', command: 'claude' },
+  { id: 'antigravity', name: 'Antigravity CLI', env: 'AGY_BIN', command: 'agy' },
 ]
 
 export function discoverProviders(env = process.env, platform = process.platform) {
@@ -32,8 +32,8 @@ export function discoverProviders(env = process.env, platform = process.platform
     let bin = configured && isAbsolute(configured) ? directEntry(configured, provider.id, platform) : null
     if (!configured) {
       const names = platform === 'win32'
-        ? [`${provider.id}.exe`, `${provider.id}.cmd`]
-        : [provider.id]
+        ? [`${provider.command}.exe`, `${provider.command}.cmd`]
+        : [provider.command]
       for (const folder of folders) {
         for (const name of names) {
           const candidate = join(folder, name)
@@ -67,9 +67,11 @@ export function launchArgs(id, workspace, permissionMode = 'restricted') {
       : ['--permission-mode', autoReview ? 'auto' : 'acceptEdits']
     return ['--print', '--verbose', '--output-format', 'stream-json', ...permissions, '--permission-prompts', 'none']
   }
-  if (id === 'gemini') {
-    return ['-p', '--output-format', 'stream-json', '--approval-mode', fullAccess ? 'yolo' : 'auto_edit',
-      ...(fullAccess ? ['--sandbox=false'] : [])]
+  if (id === 'antigravity') {
+    // Restricted: file edits are accepted; commands and other approvals are soft-denied
+    // headlessly and reported via the result's denied_actions. Slash commands stay literal text.
+    return ['--output-format', 'stream-json', '--disable-slash-commands',
+      ...(fullAccess ? ['--dangerously-skip-permissions'] : ['--mode', 'accept-edits'])]
   }
   throw new Error('Unknown AI provider.')
 }
@@ -87,8 +89,9 @@ export function foldersOverlap(left, right, platform = process.platform) {
 
 export function providerCommand(provider, workspace, prompt, permissionMode) {
   const args = launchArgs(provider.id, workspace, permissionMode)
-  if (provider.id === 'gemini') args.splice(1, 0, prompt)
+  // agy takes the prompt as a flag value; the "=" form keeps a prompt starting with "-" from parsing as a flag.
+  if (provider.id === 'antigravity') args.unshift(`--print=${prompt}`)
   const script = /\.[cm]?js$/i.test(provider.bin)
   return { command: script ? process.execPath : provider.bin, args: script ? [provider.bin, ...args] : args,
-    input: provider.id === 'gemini' ? '' : prompt }
+    input: provider.id === 'antigravity' ? '' : prompt }
 }

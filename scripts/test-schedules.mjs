@@ -23,7 +23,7 @@ test('schedule validation covers every repeat type and provider permission rules
   assert.match(validateSchedule({ ...base, repeat: 'daily', time: '24:00' }), /time of day/)
   assert.match(validateSchedule({ ...base, repeat: 'weekly', time: '09:00', days: [] }), /weekday/)
   assert.match(validateSchedule({ ...base, repeat: 'weekly', time: '09:00', days: [1, 1] }), /weekday/)
-  assert.match(validateSchedule({ ...base, repeat: 'daily', time: '09:00', provider: 'gemini', permissionMode: 'approve-for-me' }), /permission/)
+  assert.match(validateSchedule({ ...base, repeat: 'daily', time: '09:00', provider: 'antigravity', permissionMode: 'approve-for-me' }), /permission/)
   assert.match(validateSchedule({ ...base, repeat: 'daily', time: '09:00', prompt: '  ' }), /empty/)
   assert.match(validateSchedule({ ...base, repeat: 'hourly' }), /repeat/)
   assert.equal(staleOnceSchedule({ ...base, repeat: 'once', runAt: new Date(Date.now() - 5 * 60_000).toISOString() }), true)

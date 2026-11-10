@@ -7,6 +7,14 @@ export const bundledDemoIds = new Set(['demo-nova', 'demo-atlas', 'demo-sentinel
 export function displayPrompt(task: OfficeTask, translate: (text: string) => string): string {
     return bundledDemoIds.has(task.id) ? translate(task.prompt) : task.prompt;
 }
+/** Display name for a task's provider, including the retired Gemini CLI. */
+export function providerName(provider: string | undefined, short = false): string {
+  return provider === 'claude' ? (short ? 'Claude' : 'Claude Code')
+    : provider === 'antigravity' ? (short ? 'Antigravity' : 'Antigravity CLI')
+    : provider === 'gemini' ? (short ? 'Gemini' : 'Gemini CLI')
+    : short ? 'Codex' : 'Codex CLI'
+}
+
 // Older task history stores the original runner text. Translate the event
 // labels while preserving provider replies and command text verbatim.
 const legacyEventPrefixes = [

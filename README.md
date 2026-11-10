@@ -1,6 +1,6 @@
 # Agent Office 🏢
 
-**Open-source 3D mission control for local AI coding agents.** Inspect an animated office, assign Codex CLI, Claude Code or Gemini CLI tasks, follow execution events, and track task history. Built with React, TypeScript, React Three Fiber, Three.js, and Node/Express.
+**Open-source 3D mission control for local AI coding agents.** Inspect an animated office, assign Codex CLI, Claude Code or Antigravity CLI tasks, follow execution events, and track task history. Built with React, TypeScript, React Three Fiber, Three.js, and Node/Express.
 
 > **Project status: functional prototype (v0.4).** Agent profiles are configurable visual task slots backed by separate CLI executions. They do not yet share memory, delegate or form a coordinated multi-agent workflow. Idle walks and coffee breaks are ambient visual behavior, not real agent communication or task progress. In Demo mode, all activity is simulated and no code is executed. Codex is the most extensively tested provider; Claude Code support is experimental and Gemini CLI support has not been tested on a machine with Gemini installed.
 
@@ -18,7 +18,7 @@ When upgrading to v0.4, update both the CLI archive and VS Code companion. The c
 
 - Node.js 20.19+ / 22.12+ (tested on Node 24) and npm.
 - A browser with WebGL enabled.
-- At least one installed and authenticated CLI for real tasks: [Codex CLI](https://github.com/openai/codex), [Claude Code](https://code.claude.com/docs/en/quickstart), or [Gemini CLI](https://github.com/google-gemini/gemini-cli).
+- At least one installed and authenticated CLI for real tasks: [Codex CLI](https://github.com/openai/codex), [Claude Code](https://code.claude.com/docs/en/quickstart), or [Antigravity CLI](https://antigravity.google/docs/cli/) (`agy`).
 
 ## Quick start
 
@@ -61,13 +61,15 @@ And in the second terminal:
 npm run dev
 ```
 
-When launched via `agent-office`, real tasks default to your terminal's current directory; when started from the source using `npm run dev:all`, they default to this project's root. Change the folder in Settings if needed. Each task starts a new CLI process with its own prompt. Agent profiles represent independent task slots; they do not observe existing external chat sessions or automatically coordinate. The server rejects overlapping workspace folders while its own tasks are running.
+When launched via `agent-office`, real tasks default to your terminal's current directory; when started from the source using `npm run dev:all`, they default to this project's root. Change the folder in Settings if needed. Each task starts a new CLI process with its own prompt. Agent profiles represent independent task slots; they do not observe existing external chat sessions or automatically coordinate. Several agents can work at once, even in the same folder; each agent runs one task at a time, and the task log warns when agents share a folder because their edits to the same files may conflict.
 
 ### 🏢 Flexible team and expanding office
 
 Open **Agent team → Add agent** to create as many profiles as your setup needs. The original four agents are starting examples, **not a limit**: 0, 1, 10, 20, 50 and larger teams are supported by the roster and office layout. Edit each agent's name, role, mission/specialty, color and department, or remove agents when they are no longer needed. The app suggests a department when your role or mission clearly indicates one; you can override the suggestion. Unrecognized roles use shared workstations rather than being assigned to an unrelated themed area.
 
 The 3D office is a corporate floor with reception (with a live digital desk clock and a wall calendar showing today's date and weekday, both from your computer's clock), a service wing, a TV lounge, coffee counters, a games room (darts, table tennis and chess) along the south edge, a shared circulation spine and open work areas. Small teams stay together; larger teams organize by function across nine department types. Departments expand into connected pods of up to nine desks each. Leadership roles declared in the profile guide seating order and desk accents; they are a visual placement hint, not an implemented chain of command. Furniture and character proportions stay stable as the floor expands. Idle agents pick random activities and spend most of their idle time on recreation: watching TV on the lounge sofa (the TV switches on while someone watches), throwing darts, playing table tennis or chess. Table tennis and chess need two players: the first agent waits at the table (about 30 seconds unless someone is already on the way), other idle agents usually come to join, the game clock only runs while both are there, and both leave when the game ends. Agents also sit at their computer browsing, stretch or check their phone beside the desk, take a coffee break or read the schedule board. Each seat or spot holds one agent at a time, and idle agents walk the corridors one at a time so nobody meets head-on. After a task an agent keeps sitting at the computer for a while. A new task always sends the agent straight back to the desk. These are ambient visuals only: they never reflect or change real task progress.
+
+Beside reception stands a **knowledge graph** hologram that represents your [graphify](https://graphify.com) code graph. It drifts slowly in blue while idle. When a running agent queries graphify through MCP, its nodes light up in that agent's colour, spin faster, and the floating *Knowledge* label shows how many agents are reading it (for 45 seconds after each query). It reacts to tool-use events from all three providers (`mcp__graphify__*` in Claude Code, graphify tool names in Antigravity CLI, and Codex `mcp_tool_call` items from the `graphify` server). Agents only use graphify if it is set up as an MCP server in their CLI.
 
 The initial overview frames the team. Select a card or character to inspect it; the camera follows that character during a walk. Use the bottom-right overview button to see the full floor again. For rendering efficiency, **teams over 50 show the 50 nearest detailed avatars/workstations, with simplified characters, furniture and bay decoration for the remainder**. Selecting a distant agent promotes it to detailed display. Simplified distant characters show standing/seated work state without detailed idle routines. A roster of 1000 does not mean the machine can run 1000 CLI jobs; hardware, provider limits and the overlapping-project guard still apply.
 
@@ -88,7 +90,7 @@ Assign tasks to agents that run automatically: **once** at a set time, **every N
 The board's lit rows show the next four upcoming runs in each agent's colour; a green marker means ready, amber means waiting. Agents with active schedules show a calendar icon on their 3D status label. In the list you can pause/resume, **Run now**, edit, delete and jump to the last task a schedule started.
 
 - Schedules run **only while Agent Office is running**. A run missed while it was closed starts once at the next launch; several missed runs collapse into one.
-- If the agent is still busy or another task holds an overlapping folder, the schedule **waits** and starts as soon as it can.
+- If the agent is still busy, the schedule **waits** and starts as soon as it can.
 - Daily and weekly times use the clock of the computer running Agent Office.
 - Live schedules are saved in `schedules.json` next to the task history. Deleting an agent also deletes its schedules. Demo-mode schedules stay in the browser and only simulate runs.
 - Scheduled runs are unattended. Prefer **Restricted** permissions; **Full Access** lets every run change files outside the project without anyone watching.
@@ -102,7 +104,7 @@ To override CLI discovery or set the initial project directory:
 ```powershell
 $env:CODEX_BIN = 'C:\path\to\codex.exe'
 $env:CLAUDE_BIN = 'C:\path\to\claude.exe'
-$env:GEMINI_BIN = 'C:\path\to\gemini'
+$env:AGY_BIN = 'C:\path\to\agy.exe'
 $env:AGENT_OFFICE_WORKSPACE = 'C:\path\to\your-project'
 npm run server
 ```
@@ -111,7 +113,7 @@ npm run server
 
 - Rotate and zoom the 3D office; click an avatar to inspect their task. The characters react visually to their reported phases: thinking, coding, researching, finishing, or idle. A completed task triggers a brief celebration; a failed/interrupted task triggers an error reaction.
 - Customize themes, seating density, department colors, office accent and avatar movement. Idle avatars can walk along clear aisles between their workstation and their team's shared area. Appearance settings stay on this browser and can be reset at any time.
-- Launch an independent CLI task per avatar, choosing Codex, Claude Code or Gemini per task and targeting an absolute local project directory. Provider detection is performed at API startup; restart after installation.
+- Launch an independent CLI task per avatar, choosing Codex, Claude Code or Antigravity per task and targeting an absolute local project directory. Provider detection is performed at API startup; restart after installation.
 - Stream command, file-change, research and progress events to the office through Server-Sent Events (SSE).
 - Inspect a selected agent's execution phase, live elapsed time, latest update, chronological event details, errors and token usage (when reported by Codex). Select a task from the feed or history to inspect that exact run.
 - Track finished jobs, latest status and task history; request cancellation.
@@ -144,7 +146,7 @@ npm run server
 
 ## Safety and privacy
 
-The API listens only on `127.0.0.1:4300` and restricts browser origins. Each Codex job requests a `workspace-write` sandbox; Claude Code uses `acceptEdits` with noninteractive prompts denied; Gemini CLI uses `auto_edit`. These settings remain subject to your installed CLI and operating system permissions. Assign jobs only inside trusted project folders. The office blocks parallel tasks in overlapping directories **inside the office**, but cannot block jobs launched by Codex Web GPT, your editor or a second Agent Office instance.
+The API listens only on `127.0.0.1:4300` and restricts browser origins. Each Codex job requests a `workspace-write` sandbox; Claude Code uses `acceptEdits` with noninteractive prompts denied; Antigravity CLI uses `--mode accept-edits` (file edits only; commands and other actions needing approval are skipped and reported in the task log as errors), and **Full Access** passes `--dangerously-skip-permissions`. Antigravity does not offer *Approve for me*. Antigravity replaced Gemini CLI: older Gemini tasks stay in history, and saved Gemini schedules now run with Antigravity. These settings remain subject to your installed CLI and operating system permissions. Assign jobs only inside trusted project folders. Different agents may work in the same folder at once; the task log warns when they do, but nothing prevents conflicting edits, including from jobs launched by Codex Web GPT, your editor or a second Agent Office instance.
 
 CLI detection checks whether a command is installed, **not whether you are signed in**. A missing or expired login is reported by the CLI when a real task starts. For Claude Code, reauthenticate using its normal login flow in the Claude Code app/terminal before retrying the office.
 
@@ -155,7 +157,7 @@ Task prompts, statuses, phase updates, recent events (up to 35 per task) and sho
 ## Roadmap
 
 - True multi-agent planning, handoffs, coordination, shared context, and delegation.
-- More provider integrations and full real-world cross-platform testing for Gemini CLI and Claude Code.
+- More provider integrations and full real-world cross-platform testing for Antigravity CLI and Claude Code.
 - Drag-and-drop room layout editing, custom furniture, shared lounge areas, and richer agent appearance customization.
 - Marketplace publication for the VS Code extension and standalone desktop packages. A manually installable VSIX is available through GitHub Releases.
 

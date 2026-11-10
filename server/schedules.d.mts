@@ -11,4 +11,5 @@ export function staleOnceSchedule(input: ScheduleInput, now?: Date): boolean
 export function isDue(schedule: OfficeSchedule, now?: Date): boolean
 export function recordRun(schedule: OfficeSchedule, outcome: { status: 'launched' | 'waiting' | 'failed'; message?: string; taskId?: string }, now?: Date): OfficeSchedule
 export function validStoredSchedules(value: unknown): value is OfficeSchedule[]
+export function migrateSchedules(value: unknown): unknown
 export function describeRepeat(schedule: Pick<OfficeSchedule, 'repeat' | 'intervalMinutes' | 'time' | 'days'>): string

@@ -3,7 +3,7 @@ import { OrbitControls, OrthographicCamera, RoundedBox } from '@react-three/drei
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import type { Group, Mesh } from 'three'
 import { MathUtils, Vector3 } from 'three'
-import { CalendarClock } from 'lucide-react'
+import { CalendarClock, Network } from 'lucide-react'
 import { type AgentId, type OfficeSchedule, type OfficeTask } from '../types'
 import { DEPARTMENTS, useAgents } from '../agents'
 import { OfficeCampus } from './OfficeCampus'
@@ -20,12 +20,15 @@ import { ScheduleBoard } from './ScheduleBoard'
 import { LoungeTV } from './LoungeTV'
 import { GamesRoom, PingPongBall } from './GamesRoom'
 import { BOARD_LABEL_HEIGHT, scheduleBoardPosition } from './scheduleBoardLayout'
+import { KnowledgeGraph } from './KnowledgeGraph'
+import { useKnowledgeReaders } from './useKnowledgeReaders'
+import { KNOWLEDGE_LABEL, knowledgeGraphPosition, type KnowledgeReader } from './knowledgeGraphLayout'
 import type { IdlePose } from './avatarRig'
 import { resolveAgentPose, selectAgentTask, TERMINAL_POSE_MS, type AgentPose } from './agentBehavior'
 
 // Project world positions to the existing React DOM layer without creating
 // separate React roots inside Three.js (which can race during unmount).
-function BadgeProjector({ overlayId, seats, sectors, avatars, board }: { overlayId: string; seats: Seat[]; sectors: OfficeLayout['sectors']; avatars: RefObject<Map<string, Group>>; board: [number, number, number] }) {
+function BadgeProjector({ overlayId, seats, sectors, avatars, board, knowledge }: { overlayId: string; seats: Seat[]; sectors: OfficeLayout['sectors']; avatars: RefObject<Map<string, Group>>; board: [number, number, number]; knowledge: [number, number, number] }) {
   const point = useRef(new Vector3())
   const labels = useRef<Map<string, HTMLSpanElement>>(new Map())
   useEffect(() => {
@@ -63,6 +66,7 @@ function BadgeProjector({ overlayId, seats, sectors, avatars, board }: { overlay
     }
     for (const sector of sectors) place(`sector:${sector.key}`, sector.center[0], 3.9, sector.center[2] - sector.depth / 2 + .3)
     place('board:schedule', board[0], BOARD_LABEL_HEIGHT, board[2])
+    place('board:knowledge', knowledge[0] + KNOWLEDGE_LABEL.dx, KNOWLEDGE_LABEL.y, knowledge[2] + KNOWLEDGE_LABEL.dz)
   })
   return null
 }
@@ -199,11 +203,12 @@ function Workstation({ seat, simulation, selected, pose, active, onSelect, prefe
   </group>
 }
 
-function Studio({ selected, tasks, schedules, onOpenSchedules, onSelect, now, overlayId, layout, visibleSeats, distantSeats, overview, preferences }: { selected: AgentId; tasks: OfficeTask[]; schedules: OfficeSchedule[]; onOpenSchedules: () => void; onSelect: (value: AgentId) => void; now: number; overlayId: string; layout: OfficeLayout; visibleSeats: Seat[]; distantSeats: Seat[]; overview: boolean; preferences: OfficePreferences }) {
+function Studio({ selected, tasks, schedules, readers, onOpenSchedules, onSelect, now, overlayId, layout, visibleSeats, distantSeats, overview, preferences }: { selected: AgentId; tasks: OfficeTask[]; schedules: OfficeSchedule[]; readers: KnowledgeReader[]; onOpenSchedules: () => void; onSelect: (value: AgentId) => void; now: number; overlayId: string; layout: OfficeLayout; visibleSeats: Seat[]; distantSeats: Seat[]; overview: boolean; preferences: OfficePreferences }) {
   const { size } = useThree()
   const avatars = useRef(new Map<string, Group>())
   const agents = useAgents()
   const board = useMemo(() => scheduleBoardPosition(layout), [layout])
+  const knowledge = useMemo(() => knowledgeGraphPosition(layout), [layout])
   const [initialSimulation] = useState(() => reconcileOfficeSimulation(layout, new Map(), new Set(tasks.filter(task => task.status === 'running').map(task => task.agentId))))
   const simulation = useRef<OfficeSimulation>(initialSimulation)
   useLayoutEffect(() => {
@@ -242,7 +247,8 @@ function Studio({ selected, tasks, schedules, onOpenSchedules, onSelect, now, ov
     <GamesRoom layout={layout} preferences={preferences}/>
     <PingPongBall layout={layout} simulation={simulation}/>
     <ScheduleBoard layout={layout} schedules={schedules} agents={agents} accent={preferences.accent} onOpen={onOpenSchedules}/>
-    <BadgeProjector overlayId={overlayId} seats={visibleSeats} sectors={layout.sectors} avatars={avatars} board={board}/>
+    <KnowledgeGraph layout={layout} readers={readers} agents={agents} accent={preferences.accent} animate={preferences.motion !== 'off'}/>
+    <BadgeProjector overlayId={overlayId} seats={visibleSeats} sectors={layout.sectors} avatars={avatars} board={board} knowledge={knowledge}/>
     <OrthographicCamera key={`${cameraKey}-camera`} makeDefault position={[target[0] + 15, target[1] + 17, target[2] + 19]} zoom={overview ? overviewZoom : 42} near={.1} far={Math.max(250, layout.width + layout.depth + 100)} />
     <OrbitControls key={`${cameraKey}-controls`} makeDefault target={target} minPolarAngle={.25} maxPolarAngle={1.46} enablePan enableDamping dampingFactor={.08} minZoom={overview ? Math.min(2, overviewZoom) : 12} maxZoom={165} />
     <FollowSelected key={`${cameraKey}-${center[0]}-${center[2]}`} selected={selected} overview={overview} avatars={avatars} center={center}/>
@@ -305,6 +311,7 @@ export default function OfficeScene({ selected, tasks, schedules = [], onOpenSch
   const overlayId = useId()
   const scheduledAgents = useMemo(() => new Set(schedules.filter(item => item.enabled && item.nextRunAt).map(item => item.agentId)), [schedules])
   const upcomingCount = schedules.filter(item => item.enabled && item.nextRunAt).length
+  const readers = useKnowledgeReaders(tasks)
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const timeout = window.setTimeout(() => setNow(Date.now()), 0)
@@ -321,7 +328,7 @@ export default function OfficeScene({ selected, tasks, schedules = [], onOpenSch
   }, [tasks, now])
   return <div className="office-3d-shell" data-office-theme={preferences.theme} data-office-motion={effectivePreferences.motion} data-layout-transition={presentation.phase} aria-busy={presentation.phase !== 'ready'}>
     <Canvas shadows dpr={[1, 1.5]} gl={{ antialias: true, alpha: false }} onPointerMissed={() => { }}>
-      <Studio key={presentation.key} selected={selected} tasks={tasks} schedules={schedules} onOpenSchedules={() => onOpenSchedules(null)} onSelect={onSelect} now={now} overlayId={overlayId} layout={layout} visibleSeats={visibleSeats} distantSeats={distantSeats} overview={overview} preferences={effectivePreferences}/>
+      <Studio key={presentation.key} selected={selected} tasks={tasks} schedules={schedules} readers={readers} onOpenSchedules={() => onOpenSchedules(null)} onSelect={onSelect} now={now} overlayId={overlayId} layout={layout} visibleSeats={visibleSeats} distantSeats={distantSeats} overview={overview} preferences={effectivePreferences}/>
     </Canvas>
     {presentation.phase === 'closing' && <div className="scene-layout-loading" role="status">{tr('Loading 3D office…')}</div>}
     <div id={overlayId} className={`scene-phase-overlay${overview ? ' is-overview' : ''}`} aria-label={tr('Current phase')}>
@@ -337,6 +344,10 @@ export default function OfficeScene({ selected, tasks, schedules = [], onOpenSch
         aria-label={`Open scheduled tasks (${upcomingCount} upcoming)`}>
         <CalendarClock size={12} aria-hidden="true"/>Schedules<b>{upcomingCount}</b>
       </button>
+      <span className={`scene-board-label scene-knowledge-label${readers.length ? ' is-reading' : ''}`} data-board="knowledge" role="status"
+        aria-label={readers.length ? `Knowledge graph: ${readers.length} agent${readers.length > 1 ? 's' : ''} reading` : 'Knowledge graph: idle'}>
+        <Network size={12} aria-hidden="true"/>Knowledge{readers.length > 0 && <b>{readers.length}</b>}
+      </span>
       {layout.sectors.map(sector => <span key={sector.key} className="scene-sector-label" data-sector={sector.key}>
         <i style={{ background: preferences.sectorColors[sector.id] || DEPARTMENTS.find(dep => dep.id === sector.id)?.color }}/>{overview ? tr(DEPARTMENTS.find(dep => dep.id === sector.id)?.name || sector.id).split(/[ &]+/)[0] : tr(DEPARTMENTS.find(dep => dep.id === sector.id)?.name || sector.id)} · {sector.count}
       </span>)}

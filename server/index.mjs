@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { discoverProviders, foldersOverlap, providerCommand, supportsPermissionMode } from './providers.mjs'
 import { DEFAULT_AGENTS, makeAgent, validStoredAgents, validateAgent } from './agents.mjs'
 import { composeAgentPrompt } from './agent-prompt.mjs'
-import { MAX_SCHEDULES, isDue, makeSchedule, recordRun, staleOnceSchedule, validStoredSchedules, validateSchedule } from './schedules.mjs'
+import { MAX_SCHEDULES, isDue, makeSchedule, migrateSchedules, recordRun, staleOnceSchedule, validStoredSchedules, validateSchedule } from './schedules.mjs'
 import { jsonLines, parseMessage, shrink } from './task-output.mjs'
 import { terminateProcess } from './processes.mjs'
 
@@ -144,7 +144,7 @@ function changeSchedules(edit) {
 
 async function loadSchedules() {
   try {
-    const stored = JSON.parse(await readFile(SCHEDULE_STORE, 'utf8'))
+    const stored = migrateSchedules(JSON.parse(await readFile(SCHEDULE_STORE, 'utf8')))
     if (validStoredSchedules(stored)) schedules = stored
     else throw new Error('Invalid schedules.json; the original file was preserved.')
   } catch (error) {
@@ -190,7 +190,8 @@ async function loadHistory() {
       ['thinking', 'coding', 'researching', 'finishing', 'idle'].includes(task.phase) &&
       typeof task.createdAt === 'string' && typeof task.updatedAt === 'string' && optionalText(task.finishedAt) &&
       optionalText(task.agentName) && optionalText(task.failure) &&
-      (task.provider == null || ['codex', 'claude', 'gemini'].includes(task.provider)) &&
+      // 'gemini' is kept so tasks from the retired Gemini CLI integration stay readable.
+      (task.provider == null || ['codex', 'claude', 'antigravity', 'gemini'].includes(task.provider)) &&
       (task.usage == null || (object(task.usage) && ['input_tokens', 'output_tokens'].every(key => task.usage[key] == null ||
         (typeof task.usage[key] === 'number' && Number.isFinite(task.usage[key]))))) &&
       (task.events === undefined || (Array.isArray(task.events) && task.events.every(event => object(event) &&
@@ -308,7 +309,7 @@ app.post('/api/schedules/:id/run', scheduleRoute(async req => {
   return { status: 201, body: { task: result.body.task } }
 }))
 
-// Launch every due schedule once. A busy agent or locked folder keeps the
+// Launch every due schedule once. A busy agent keeps the
 // schedule waiting, so the run starts as soon as it is free; missed runs
 // (for example while the office was closed) collapse into a single run.
 async function runDueSchedules() {
@@ -377,7 +378,8 @@ async function launchTask(request, schedule = null) {
   try { canonical = realpathSync(workspace) }
   catch { return reply(400, { error: 'Could not access the project directory.' }) }
   if ([...active.values()].some(a => a.task.agentId === agentId)) return reply(409, { error: 'Agent is already working.' })
-  if ([...active.values()].some(a => foldersOverlap(canonical, a.canonical))) return reply(409, { error: 'A task is already running in an overlapping directory. Wait for it to finish or choose another project.' })
+  // Different agents may share a project folder; warn instead of blocking so they can work in parallel.
+  const neighbours = [...new Set([...active.values()].filter(a => foldersOverlap(canonical, a.canonical)).map(a => a.task.agentName))]
 
   const task = {
     id: randomUUID(), agentId, agentName: agent.name, provider: provider.id, prompt, workspace, status: 'running', phase: 'thinking',
@@ -391,6 +393,7 @@ async function launchTask(request, schedule = null) {
   if (schedule) addEvent(task, `Started by schedule "${shrink(schedule.title || schedule.prompt, 60)}".`)
   addEvent(task, permissionMode === 'restricted' ? `Task sent to ${provider.name}.`
     : `Task sent to ${provider.name} with ${permissionMode === 'full-access' ? 'Full Access' : 'Approve for me'}.`)
+  if (neighbours.length) addEvent(task, `Sharing this project folder with ${shrink(neighbours.join(', '), 120)}, who ${neighbours.length > 1 ? 'are' : 'is'} also working. Edits to the same files may conflict.`)
 
   // Reserve the agent and canonical folder before awaiting durable storage.
   const running = { child: null, task, canonical, stopping: null }

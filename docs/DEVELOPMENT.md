@@ -2,7 +2,7 @@
 
 ## Requirements
 
-Install Node.js with npm (Node 24 recommended; minimum supported by Vite: Node 20.19+ or 22.12+), a browser supporting WebGL, and at least one coding agent CLI for real tasks (Codex, Claude Code or Gemini CLI).
+Install Node.js with npm (Node 24 recommended; minimum supported by Vite: Node 20.19+ or 22.12+), a browser supporting WebGL, and at least one coding agent CLI for real tasks (Codex, Claude Code or Antigravity CLI).
 
 ### Windows (PowerShell)
 
@@ -28,7 +28,7 @@ npm ci
 npm run dev:all
 ```
 
-CLI executable discovery uses PATH. On Windows, `.cmd` wrappers are resolved to native or Node executables without invoking a command shell. `CODEX_BIN`, `CLAUDE_BIN` and `GEMINI_BIN` may override each executable path. On Windows PowerShell, for example:
+CLI executable discovery uses PATH. On Windows, `.cmd` wrappers are resolved to native or Node executables without invoking a command shell. `CODEX_BIN`, `CLAUDE_BIN` and `AGY_BIN` may override each executable path. On Windows PowerShell, for example:
 
 ```powershell
 $env:CODEX_BIN = 'C:\tools\codex.exe'

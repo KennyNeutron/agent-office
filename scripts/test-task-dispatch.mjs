@@ -22,14 +22,14 @@ test('task dispatch passes the agent profile and preserves the human request for
     "const { writeFileSync } = require('node:fs')",
     "const { join } = require('node:path')",
     'const args = process.argv.slice(2)',
-    "const provider = args.includes('exec') ? 'codex' : args.includes('--print') ? 'claude' : 'gemini'",
+    "const provider = args.includes('exec') ? 'codex' : args.some(arg => arg.startsWith('--print=')) ? 'antigravity' : 'claude'",
     "let incoming = ''",
     "process.stdin.setEncoding('utf8')",
     "process.stdin.on('data', part => incoming += part)",
     "process.stdin.on('end', () => {",
-    "  const prompt = provider === 'gemini' ? args[args.indexOf('-p') + 1] : incoming",
+    "  const prompt = provider === 'antigravity' ? args.find(arg => arg.startsWith('--print=')).slice(8) : incoming",
     "  writeFileSync(join(process.env.AGENT_OFFICE_FAKE_CAPTURE, provider + '.json'), JSON.stringify({ args, prompt }))",
-    "  process.stdout.write(JSON.stringify({ type: provider === 'codex' ? 'turn.completed' : 'result' }) + '\\n')",
+    "  process.stdout.write(JSON.stringify(provider === 'codex' ? { type: 'turn.completed' } : provider === 'claude' ? { type: 'result' } : { event: 'result', result: { status: 'SUCCESS' } }) + '\\n')",
     '})',
   ].join('\n'))
 
@@ -43,7 +43,7 @@ test('task dispatch passes the agent profile and preserves the human request for
     cwd: resolve('.'), windowsHide: true, stdio: 'ignore',
     env: {
       ...process.env, PORT: String(port), AGENT_OFFICE_DATA_DIR: data,
-      CODEX_BIN: fakeCli, CLAUDE_BIN: fakeCli, GEMINI_BIN: fakeCli,
+      CODEX_BIN: fakeCli, CLAUDE_BIN: fakeCli, AGY_BIN: fakeCli,
       AGENT_OFFICE_FAKE_CAPTURE: captures,
     },
   })
@@ -70,7 +70,7 @@ test('task dispatch passes the agent profile and preserves the human request for
     const profile = { ...existing, name: 'Review Specialist', role: 'Visual QA', specialty: 'Animation posture', department: 'quality' }
     await request(`/api/agents/${existing.id}`, 'PUT', profile)
     const humanPrompt = '  Review the seating transition.\nQuotes " & ; $(literal). Do not alter the live project.  '
-    for (const provider of ['codex', 'claude', 'gemini']) {
+    for (const provider of ['codex', 'claude', 'antigravity']) {
       const { task } = await request('/api/tasks', 'POST', { agentId: existing.id, provider, workspace, prompt: humanPrompt })
       assert.equal(task.prompt, humanPrompt, 'History must retain the original task')
       let completed = false
@@ -89,7 +89,7 @@ test('task dispatch passes the agent profile and preserves the human request for
         ? ['exec', '--json', '--skip-git-repo-check', '-s', 'workspace-write', '-C', workspace, '-']
         : provider === 'claude'
           ? ['--print', '--verbose', '--output-format', 'stream-json', '--permission-mode', 'acceptEdits', '--permission-prompts', 'none']
-          : ['-p', capture.prompt, '--output-format', 'stream-json', '--approval-mode', 'auto_edit']
+          : [`--print=${capture.prompt}`, '--output-format', 'stream-json', '--disable-slash-commands', '--mode', 'accept-edits']
       assert.deepEqual(capture.args, expected, `${provider} must receive the exact argv, without shell interpretation`)
       for (const field of ['Review Specialist', 'Visual QA', 'Animation posture', 'quality', humanPrompt]) {
         assert.ok(capture.prompt.includes(field), `${provider} did not receive ${field}`)
@@ -123,7 +123,7 @@ async function fixture(t, mode = 'success', files = {}) {
 const fs = require('node:fs')
 const { spawn } = require('node:child_process')
 const args = process.argv.slice(2)
-const provider = args.includes('exec') ? 'codex' : args.includes('--print') ? 'claude' : 'gemini'
+const provider = args.includes('exec') ? 'codex' : args.some(arg => arg.startsWith('--print=')) ? 'antigravity' : 'claude'
 const mode = process.env.AO_FIXTURE_MODE
 const emit = value => process.stdout.write(JSON.stringify(value) + '\\n')
 let prompt = ''
@@ -141,12 +141,12 @@ process.stdin.on('end', () => {
   }
   if (mode === 'empty') return
   if (mode === 'failure') {
-    process.stdout.write(JSON.stringify(provider === 'codex' ? {type:'turn.failed',error:{message:'fixture failed'}} : provider === 'claude' ? {type:'result',subtype:'error_max_turns',errors:['fixture failed']} : {type:'result',status:'error',error:{message:'fixture failed'}}))
+    process.stdout.write(JSON.stringify(provider === 'codex' ? {type:'turn.failed',error:{message:'fixture failed'}} : provider === 'claude' ? {type:'result',subtype:'error_max_turns',errors:['fixture failed']} : {event:'result',result:{status:'ERROR',error:{message:'fixture failed'}}}))
     return
   }
   if (mode === 'stderr') { process.stderr.write('fixture stderr failure'); process.exitCode = 9; return }
   emit({type:'error',message:'recoverable warning'})
-  const result = provider === 'codex' ? {type:'turn.completed',usage:{input_tokens:2}} : {type:'result',status:'success',subtype:'success'}
+  const result = provider === 'codex' ? {type:'turn.completed',usage:{input_tokens:2}} : provider === 'claude' ? {type:'result',subtype:'success'} : {event:'result',result:{status:'SUCCESS',response:'done'}}
   process.stdout.write(JSON.stringify(result)) // Intentionally no final newline.
 })
 `)
@@ -160,7 +160,7 @@ process.stdin.on('end', () => {
     server = spawn(process.execPath, [wrapper], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe', 'ipc'], env: {
       ...process.env, PORT: String(port), AGENT_OFFICE_DATA_DIR: data, AGENT_OFFICE_WORKSPACE: workspace,
       AGENT_OFFICE_INSTANCE_ID: `fixture-${port}`,
-      CODEX_BIN: fake, CLAUDE_BIN: fake, GEMINI_BIN: fake, AO_CAPTURE: capture, AO_TICK: tick, AO_FIXTURE_MODE: mode,
+      CODEX_BIN: fake, CLAUDE_BIN: fake, AGY_BIN: fake, AO_CAPTURE: capture, AO_TICK: tick, AO_FIXTURE_MODE: mode,
     } })
     let errors = ''
     server.stderr.on('data', chunk => errors += chunk)
@@ -193,7 +193,7 @@ process.stdin.on('end', () => {
 
 test('all providers recognize terminal records without newline and persist acknowledged tasks across restart', async t => {
   const f = await fixture(t)
-  for (const provider of ['codex', 'claude', 'gemini']) {
+  for (const provider of ['codex', 'claude', 'antigravity']) {
     const result = await f.launch(provider)
     assert.equal(result.status, 201)
     const id = result.body.task.id
@@ -208,7 +208,7 @@ test('all providers recognize terminal records without newline and persist ackno
 
 test('structured provider failures and nonzero stderr exits cannot become successful tasks', async t => {
   const f = await fixture(t, 'failure')
-  for (const provider of ['codex', 'claude', 'gemini']) {
+  for (const provider of ['codex', 'claude', 'antigravity']) {
     const { body } = await f.launch(provider)
     const task = await until(async () => { const item = await f.task(body.task.id); return item.status !== 'running' && item })
     assert.equal(task.status, 'failed'); assert.match(task.failure, /fixture failed/)
@@ -226,16 +226,22 @@ test('exit zero without a completion record is reported as failure', async t => 
   assert.equal(task.status, 'failed'); assert.match(task.failure, /without a completion event/)
 })
 
-test('continuous output persists; cancellation stops descendants and holds canonical workspace locks', async t => {
+test('continuous output persists; cancellation stops descendants; agents can share a workspace', async t => {
   const f = await fixture(t, 'hold')
   const childFolder = join(f.workspace, 'nested'); await mkdir(childFolder)
   const alias = join(f.root, 'project-alias'); await symlink(f.workspace, alias, process.platform === 'win32' ? 'junction' : 'dir')
   const result = await f.launch(); assert.equal(result.status, 201)
   const id = result.body.task.id
   await until(async () => { try { return (await readFile(f.tick, 'utf8')).length > 0 } catch { return false } })
-  assert.equal((await f.launch('claude', { agentId: 'nova', workspace: childFolder })).status, 409)
-  assert.equal((await f.launch('claude', { agentId: 'nova', workspace: alias })).status, 409)
+  // A different agent may share the folder (nested or via alias) and is warned, not blocked.
+  const parallel = await f.launch('claude', { agentId: 'nova', workspace: childFolder })
+  assert.equal(parallel.status, 201)
+  assert.ok(parallel.body.task.events.some(event => /Sharing this project folder/.test(event.message)))
+  assert.equal((await f.launch('antigravity', { agentId: 'nova', workspace: alias })).status, 409, 'A busy agent accepted a second task')
+  assert.equal((await f.launch('codex')).status, 409, 'A busy agent accepted a second task')
   assert.equal((await f.request('/api/agents/atlas', 'DELETE')).status, 409)
+  assert.equal((await f.request(`/api/tasks/${parallel.body.task.id}/cancel`, 'POST')).status, 200)
+  await until(async () => (await f.task(parallel.body.task.id)).status === 'cancelled')
   await until(async () => JSON.parse(await readFile(join(f.data, 'tasks.json'), 'utf8')).some(item => item.id === id && item.events.some(event => event.message.includes('progress'))))
   const cancel = await f.request(`/api/tasks/${id}/cancel`, 'POST') // Same bodyless request as the UI.
   assert.equal(cancel.status, 200)

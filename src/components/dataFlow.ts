@@ -13,7 +13,7 @@ export function isOfficeTask(value: unknown): value is OfficeTask {
     ['thinking', 'coding', 'researching', 'finishing', 'idle'].includes(String(value.phase)) &&
     text(value.createdAt) && text(value.updatedAt) && (value.finishedAt === null || text(value.finishedAt)) &&
     (value.agentName == null || text(value.agentName)) && (value.failure == null || text(value.failure)) &&
-    (value.provider == null || ['codex', 'claude', 'gemini'].includes(String(value.provider))) &&
+    (value.provider == null || ['codex', 'claude', 'antigravity', 'gemini'].includes(String(value.provider))) &&
     validUsage(value.usage) &&
     Array.isArray(value.events) && value.events.every(event => object(event) && text(event.id) && text(event.at) && text(event.kind) && text(event.message));
 }
@@ -22,7 +22,7 @@ export function isServerState(value: unknown): value is ServerState {
     Array.isArray(value.agents) && value.agents.every(validateDemoAgent) && new Set(value.agents.map(agent => agent.id)).size === value.agents.length &&
     Array.isArray(value.tasks) && value.tasks.every(isOfficeTask) && new Set(value.tasks.map(task => task.id)).size === value.tasks.length &&
     Array.isArray(value.providers) && value.providers.every(provider => object(provider) &&
-      ['codex', 'claude', 'gemini'].includes(String(provider.id)) && text(provider.name) && typeof provider.available === 'boolean') &&
+      ['codex', 'claude', 'antigravity'].includes(String(provider.id)) && text(provider.name) && typeof provider.available === 'boolean') &&
     (value.schedules == null || validStoredSchedules(value.schedules));
 }
 

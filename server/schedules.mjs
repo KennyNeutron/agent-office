@@ -5,7 +5,7 @@
 // them (the API's machine for Live mode, the browser for Demo mode).
 
 export const SCHEDULE_REPEATS = ['once', 'interval', 'daily', 'weekly']
-export const SCHEDULE_PROVIDERS = ['codex', 'claude', 'gemini']
+export const SCHEDULE_PROVIDERS = ['codex', 'claude', 'antigravity']
 export const SCHEDULE_PERMISSIONS = ['restricted', 'approve-for-me', 'full-access']
 export const MAX_SCHEDULES = 200
 export const MIN_INTERVAL_MINUTES = 5
@@ -26,7 +26,7 @@ export function validateSchedule(input) {
   if (typeof input.prompt !== 'string' || !input.prompt.trim() || input.prompt.length > 10000) return 'Task is empty or too long.'
   if (typeof input.workspace !== 'string' || input.workspace.length > 1000 || input.workspace.includes('\0')) return 'Invalid project directory.'
   if (!SCHEDULE_PROVIDERS.includes(input.provider)) return 'Unknown AI provider.'
-  if (!SCHEDULE_PERMISSIONS.includes(input.permissionMode) || (input.provider === 'gemini' && input.permissionMode === 'approve-for-me')) return 'This permission mode is unavailable for the selected provider.'
+  if (!SCHEDULE_PERMISSIONS.includes(input.permissionMode) || (input.provider === 'antigravity' && input.permissionMode === 'approve-for-me')) return 'This permission mode is unavailable for the selected provider.'
   if (!SCHEDULE_REPEATS.includes(input.repeat)) return 'Unknown repeat option.'
   if (typeof input.enabled !== 'boolean') return 'Invalid enabled flag.'
   if ((input.repeat === 'once' || input.repeat === 'interval') && !validDate(input.runAt)) return 'Choose a valid start date and time.'
@@ -112,6 +112,11 @@ export function recordRun(schedule, outcome, now = new Date()) {
   if (schedule.repeat === 'once') { next.enabled = false; next.nextRunAt = null }
   else next.nextRunAt = computeNextRun(next, now)
   return next
+}
+
+/** Gemini CLI was replaced by Antigravity CLI; saved Gemini schedules move over unchanged otherwise. */
+export function migrateSchedules(value) {
+  return Array.isArray(value) ? value.map(item => item && typeof item === 'object' && item.provider === 'gemini' ? { ...item, provider: 'antigravity' } : item) : value
 }
 
 export function validStoredSchedules(value) {

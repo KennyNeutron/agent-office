@@ -8,7 +8,7 @@ import { Dot } from './components/Avatar';
 import { Sidebar } from './components/Sidebar';
 import { NewTask } from './components/NewTask';
 import { ScheduleManager } from './components/ScheduleManager';
-import { isDue, makeSchedule, recordRun, staleOnceSchedule, validStoredSchedules, validateSchedule } from '../server/schedules.mjs';
+import { isDue, makeSchedule, migrateSchedules, recordRun, staleOnceSchedule, validStoredSchedules, validateSchedule } from '../server/schedules.mjs';
 import { isAbsoluteWorkspace, isOfficeTask, isServerState, readResponse } from './components/dataFlow';
 import { bundledDemoIds } from './components/taskDisplay';
 import { Studio } from './views/Studio';
@@ -29,7 +29,7 @@ const DEMO_SCHEDULES_KEY = 'agent-office-demo-schedules';
 
 function loadDemoSchedules(): OfficeSchedule[] {
   try {
-    const saved: unknown = JSON.parse(readPreference(DEMO_SCHEDULES_KEY) || '[]');
+    const saved: unknown = migrateSchedules(JSON.parse(readPreference(DEMO_SCHEDULES_KEY) || '[]'));
     return validStoredSchedules(saved) ? saved : [];
   } catch { return []; }
 }
@@ -90,7 +90,7 @@ export default function App() {
   const [workspace, setWorkspace] = useState(savedWorkspace ?? '');
   const [officePreferences, setOfficePreferences] = useState(loadOfficePreferences);
   const [provider, setProvider] = useState<ProviderId>(() => {
-    try { const stored = localStorage.getItem('agent-office-provider'); if (stored === 'claude' || stored === 'gemini') return stored; } catch { /* Storage disabled */ }
+    try { const stored = localStorage.getItem('agent-office-provider'); if (stored === 'claude' || stored === 'antigravity') return stored; if (stored === 'gemini') return 'antigravity'; } catch { /* Storage disabled */ }
     return 'codex';
   });
   const [modal, setModal] = useState(false);

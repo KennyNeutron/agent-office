@@ -1,6 +1,8 @@
 export type AgentId = string
 export type Department = 'architecture' | 'engineering' | 'design' | 'quality' | 'research' | 'operations' | 'security' | 'data' | 'general'
-export type ProviderId = 'codex' | 'claude' | 'gemini'
+export type ProviderId = 'codex' | 'claude' | 'antigravity'
+/** Launchable providers plus 'gemini', kept so history from the retired Gemini CLI integration stays readable. */
+export type TaskProviderId = ProviderId | 'gemini'
 export type PermissionMode = 'restricted' | 'approve-for-me' | 'full-access'
 export interface ProviderInfo { id: ProviderId; name: string; available: boolean }
 export type TaskStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
@@ -19,7 +21,7 @@ export interface OfficeTask {
   id: string
   agentId: AgentId
   agentName?: string
-  provider?: ProviderId
+  provider?: TaskProviderId
   prompt: string
   workspace: string
   status: TaskStatus

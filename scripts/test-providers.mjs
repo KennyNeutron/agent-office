@@ -9,7 +9,8 @@ import { jsonLines, parseMessage } from '../server/task-output.mjs'
 test('supports three CLI choices and safe launch arguments', () => {
   assert.equal(launchArgs('codex', '/projects/a')[0], 'exec')
   assert.ok(launchArgs('claude', '/projects/a').includes('stream-json'))
-  assert.ok(launchArgs('gemini', '/projects/a').includes('auto_edit'))
+  assert.ok(launchArgs('antigravity', '/projects/a').includes('accept-edits'))
+  assert.throws(() => launchArgs('gemini', '/projects/a'), 'Gemini CLI was replaced by Antigravity CLI')
   assert.throws(() => launchArgs('other', '/projects/a'))
 })
 
@@ -19,8 +20,9 @@ test('permission escalation is explicit and unavailable modes are rejected', () 
   assert.ok(launchArgs('claude', workspace, 'approve-for-me').includes('auto'))
   assert.ok(launchArgs('codex', workspace, 'full-access').includes('--dangerously-bypass-approvals-and-sandbox'))
   assert.ok(launchArgs('claude', workspace, 'full-access').includes('--dangerously-skip-permissions'))
-  assert.ok(launchArgs('gemini', workspace, 'full-access').includes('--sandbox=false'))
-  assert.throws(() => launchArgs('gemini', workspace, 'approve-for-me'))
+  assert.ok(launchArgs('antigravity', workspace, 'full-access').includes('--dangerously-skip-permissions'))
+  assert.ok(!launchArgs('antigravity', workspace).includes('--dangerously-skip-permissions'))
+  assert.throws(() => launchArgs('antigravity', workspace, 'approve-for-me'))
   assert.throws(() => launchArgs('codex', workspace, 'ask'))
   assert.throws(() => launchArgs('codex', workspace, true))
 })
@@ -62,14 +64,16 @@ test('provider argv keeps flags exact and separates shell metacharacters from co
   const prompt = 'Quotes " and & ; $(literal)\nSecond line'
   assert.deepEqual(launchArgs('codex', workspace), ['exec', '--json', '--skip-git-repo-check', '-s', 'workspace-write', '-C', workspace, '-'])
   assert.deepEqual(launchArgs('claude', workspace), ['--print', '--verbose', '--output-format', 'stream-json', '--permission-mode', 'acceptEdits', '--permission-prompts', 'none'])
-  assert.deepEqual(launchArgs('gemini', workspace), ['-p', '--output-format', 'stream-json', '--approval-mode', 'auto_edit'])
-  for (const id of ['codex', 'claude', 'gemini']) {
+  assert.deepEqual(launchArgs('antigravity', workspace), ['--output-format', 'stream-json', '--disable-slash-commands', '--mode', 'accept-edits'])
+  for (const id of ['codex', 'claude', 'antigravity']) {
     const command = providerCommand({ id, bin: '/fake/provider.cjs' }, workspace, prompt)
     assert.equal(command.command, process.execPath)
     assert.equal(command.args[0], '/fake/provider.cjs')
-    assert.equal(command.input, id === 'gemini' ? '' : prompt)
-    if (id === 'gemini') assert.equal(command.args[2], prompt)
+    assert.equal(command.input, id === 'antigravity' ? '' : prompt)
+    if (id === 'antigravity') assert.equal(command.args[1], `--print=${prompt}`)
   }
+  // A prompt that looks like a flag stays the --print value.
+  assert.equal(providerCommand({ id: 'antigravity', bin: '/usr/bin/agy' }, workspace, '--help').args[0], '--print=--help')
 })
 
 test('JSONL preserves fragmented UTF-8 text, CRLF and final records, and recovers after oversized lines', () => {
@@ -88,7 +92,7 @@ test('JSONL preserves fragmented UTF-8 text, CRLF and final records, and recover
 test('provider parsers accept malformed shapes, expose terminal errors and retain recoverable diagnostics', () => {
   const events = []
   const add = (_task, message) => events.push(message)
-  for (const provider of ['codex', 'claude', 'gemini']) {
+  for (const provider of ['codex', 'claude', 'antigravity']) {
     const task = { provider, lastMessage: '' }
     for (const value of [null, [], 1, { type: 'assistant', message: { content: {} } }, { type: 'assistant', message: { content: [null, 1] } }]) {
       assert.doesNotThrow(() => parseMessage(task, value, add))
@@ -97,17 +101,45 @@ test('provider parsers accept malformed shapes, expose terminal errors and retai
   const claude = { provider: 'claude' }
   parseMessage(claude, { type: 'result', subtype: 'error_max_turns', errors: ['Turn limit'] }, add)
   assert.equal(claude.failure, 'Turn limit'); assert.equal(claude.outputComplete, true)
-  const gemini = { provider: 'gemini', lastMessage: '' }
-  parseMessage(gemini, { type: 'error', message: 'retrying' }, add)
-  parseMessage(gemini, { type: 'message', role: 'assistant', content: 'Hello ', delta: true }, add)
-  parseMessage(gemini, { type: 'message', role: 'assistant', content: 'world', delta: true }, add)
-  parseMessage(gemini, { type: 'result', status: 'success', stats: { total_tokens: 4 } }, add)
-  assert.equal(gemini.lastMessage, 'Hello world'); assert.equal(gemini.failure, undefined)
-  assert.deepEqual(gemini.usage, { total_tokens: 4 })
+  // Shapes captured from agy 1.5.4 stream-json output.
+  const agy = { provider: 'antigravity', lastMessage: '', events: [] }
+  const log = (task, message, kind = 'info') => task.events.push([kind, message])
+  const step = (step_index, state, extra) => ({ event: 'step_update', step_update: { conversation_id: 'c1', step_index, state, ...extra } })
+  parseMessage(agy, { event: 'init', conversation_id: 'c1', init: { cwd: '/p', tools: ['read_file'], permission_mode: 'request-review' } }, log)
+  parseMessage(agy, step(0, 'DONE', { step_type: 'user_input' }), log)
+  parseMessage(agy, step(1, 'DONE', { step_type: 'agent_response', usage: { total_tokens: 3 } }), log)
+  parseMessage(agy, step(2, 'ACTIVE', { step_type: 'tool', tool_name: 'read_file', tool_info: { name: 'read_file', parameters: {} } }), log)
+  parseMessage(agy, step(2, 'DONE', { step_type: 'tool', tool_name: 'read_file', tool_info: { name: 'read_file', output: '1 lines' } }), log)
+  parseMessage(agy, step(3, 'ACTIVE', { step_type: 'agent_response', text_delta: 'Hello ' }), log)
+  parseMessage(agy, step(3, 'DONE', { step_type: 'agent_response', text_delta: 'world\n' }), log)
+  parseMessage(agy, { event: 'result', result: { conversation_id: 'c1', status: 'SUCCESS', response: 'Hello world\n', usage: { input_tokens: 2, output_tokens: 2, total_tokens: 4 } } }, log)
+  assert.equal(agy.threadId, 'c1'); assert.equal(agy.lastMessage, 'Hello world '); assert.equal(agy.failure, undefined)
+  assert.equal(agy.outputComplete, true); assert.deepEqual(agy.usage, { input_tokens: 2, output_tokens: 2, total_tokens: 4 })
+  assert.deepEqual(agy.events, [['info', 'Antigravity used read_file.'], ['info', 'Antigravity replied: Hello world']])
+  // Soft-denied approvals exit 0 with SUCCESS, so they must still surface as an error event.
+  const denied = { provider: 'antigravity', lastMessage: '', events: [] }
+  parseMessage(denied, step(2, 'ACTIVE', { step_type: 'tool', tool_name: 'run_command' }), log)
+  parseMessage(denied, step(2, 'ERROR', { step_type: 'tool', tool_name: 'run_command', tool_info: { error: { type: 'TOOL_ERROR', message: 'permission check failed' } } }), log)
+  parseMessage(denied, { event: 'result', result: { status: 'SUCCESS', response: '', denied_actions: [{ action: 'command', display_name: 'RunCommand' }] } }, log)
+  assert.equal(denied.failure, undefined)
+  assert.deepEqual(denied.events.map(([kind]) => kind), ['info', 'error', 'error'])
+  assert.match(denied.events[2][1], /skipped actions that required approval \(RunCommand\)/)
+  const failed = { provider: 'antigravity', lastMessage: '' }
+  parseMessage(failed, { event: 'result', result: { status: 'ERROR', error: 'quota exceeded' } }, add)
+  assert.equal(failed.failure, 'quota exceeded'); assert.equal(failed.outputComplete, true)
+  const interrupted = { provider: 'antigravity', lastMessage: '' }
+  parseMessage(interrupted, { event: 'result', result: { status: 'INTERRUPTED' } }, add)
+  assert.match(interrupted.failure, /status INTERRUPTED/)
   const codex = { provider: 'codex' }
   parseMessage(codex, { type: 'error', message: 'retrying' }, add)
   parseMessage(codex, { type: 'turn.completed' }, add)
   assert.equal(codex.failure, undefined); assert.equal(codex.outputComplete, true)
+
+  const mcp = { provider: 'codex', events: [] }
+  const record = (task, message) => task.events.push(message)
+  parseMessage(mcp, { type: 'item.started', item: { type: 'mcp_tool_call', server: 'graphify', tool: 'query_graph' } }, record)
+  parseMessage(mcp, { type: 'item.updated', item: { type: 'mcp_tool_call', server: 'graphify', tool: 'query_graph' } }, record)
+  assert.deepEqual(mcp.events, ['Starting graphify tool: query_graph']); assert.equal(mcp.phase, 'researching')
 })
 
 test('detects CLI binaries without invoking a shell', async () => {
@@ -121,7 +153,10 @@ test('detects CLI binaries without invoking a shell', async () => {
     const list = discoverProviders({ PATH: root + delimiter }, 'win32')
     assert.equal(list.find(item => item.id === 'codex').available, true)
     assert.equal(list.find(item => item.id === 'claude').available, true)
-    assert.equal(list.find(item => item.id === 'gemini').available, false)
+    assert.equal(list.find(item => item.id === 'antigravity').available, false)
+    assert.equal(list.some(item => item.id === 'gemini'), false)
     assert.equal(list.find(item => item.id === 'claude').bin, join(claude, 'claude.exe'))
+    await writeFile(join(root, 'agy.exe'), '')
+    assert.equal(discoverProviders({ PATH: root }, 'win32').find(item => item.id === 'antigravity').bin, join(root, 'agy.exe'), 'Antigravity is found by its agy command name')
   } finally { await rm(root, { recursive: true, force: true }) }
 })

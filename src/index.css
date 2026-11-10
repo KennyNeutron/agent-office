@@ -319,6 +319,10 @@ select:focus-visible{outline:3px solid #9a96f2;outline-offset:2px}
 .scene-phase-overlay .scene-board-label:hover,.scene-phase-overlay .scene-board-label:focus-visible{background:#6d63e8;outline:2px solid white;outline-offset:1px}
 .scene-board-label b{min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:#8076f2;color:white;font-size:9px;display:grid;place-items:center}
 .scene-phase-overlay.is-overview .scene-board-label{transform:translate(-50%,-50%) scale(.84)}
+.scene-phase-overlay .scene-knowledge-label{cursor:default;background:#17304af0;border-color:#5d8fbf;color:#dcebfb;opacity:.82}
+.scene-phase-overlay .scene-knowledge-label:hover{background:#17304af0;outline:none}
+.scene-phase-overlay .scene-knowledge-label.is-reading{opacity:1;border-color:#62d6c4;box-shadow:0 0 14px #3fd2bf66}
+.scene-knowledge-label b{background:#2aa58f}
 .scene-phase-label .label-schedule{margin-left:2px;color:#b7b1ff;flex:none}
 .schedule-filter{display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;margin-bottom:14px;scrollbar-width:thin;scrollbar-color:#d5d9e6 transparent}
 .schedule-filter button{flex:none;display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid #e7eaf1;border-radius:20px;background:white;font-size:11px;font-weight:800;color:#67738a}
