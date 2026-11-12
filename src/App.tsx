@@ -9,6 +9,7 @@ import { Sidebar } from './components/Sidebar';
 import { NewTask } from './components/NewTask';
 import { ScheduleManager } from './components/ScheduleManager';
 import { AgentChat } from './components/AgentChat';
+import { ProjectDialog, ProjectPill } from './components/ProjectPicker';
 import { KnowledgePanel } from './components/KnowledgePanel';
 import { isDue, makeSchedule, migrateSchedules, recordRun, staleOnceSchedule, validStoredSchedules, validateSchedule } from '../server/schedules.mjs';
 import { isAbsoluteWorkspace, isOfficeTask, isServerState, readResponse } from './components/dataFlow';
@@ -90,8 +91,9 @@ export default function App() {
   const [scheduleModal, setScheduleModal] = useState<{ agentId: AgentId | null } | null>(null);
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const [chatAgent, setChatAgent] = useState<AgentId | null>(null);
-  const [savedWorkspace] = useState(() => readPreference('agent-office-workspace'));
-  const [workspace, setWorkspace] = useState(savedWorkspace ?? '');
+  const [projectOpen, setProjectOpen] = useState(false);
+  // Folder typed in older versions, kept only in this browser; moved to the office once.
+  const [legacyWorkspace] = useState(() => readPreference('agent-office-workspace'));
   const [officePreferences, setOfficePreferences] = useState(loadOfficePreferences);
   const [provider, setProvider] = useState<ProviderId>(() => {
     try { const stored = localStorage.getItem('agent-office-provider'); if (stored === 'claude' || stored === 'antigravity') return stored; if (stored === 'gemini') return 'antigravity'; } catch { /* Storage disabled */ }
@@ -109,8 +111,12 @@ export default function App() {
   const mounted = useRef(false);
   const snapshotVersion = useRef(0);
   const pendingState = useRef<AbortController | null>(null);
-  const workspaceTouched = useRef(savedWorkspace !== null);
+  const legacyMigrated = useRef(false);
   const agents = demo ? demoRoster : server?.agents ?? EMPTY_AGENTS;
+  // The office project, shared by every task, schedule, chat and the knowledge panel.
+  const workspace = server?.defaultWorkspace ?? '';
+  // The project folder can be changed from the top bar and the office only against the live API.
+  const projectEditable = !PUBLIC_DEMO && !demo && Boolean(server);
   // Created-task history survives agent removal; bundled samples belong to the sample crew only.
   const tasks = useMemo(() => demo ? demoData.filter(task => !bundledDemoIds.has(task.id) || agents.some(agent => agent.id === task.agentId)) : server?.tasks ?? [], [demo, demoData, server, agents]);
   const schedules = useMemo(() => demo ? demoSchedules.filter(item => agents.some(agent => agent.id === item.agentId)) : server?.schedules ?? [], [demo, demoSchedules, server, agents]);
@@ -138,10 +144,26 @@ export default function App() {
     setSelected(id); setSelectedTask(null); setTaskError('');
     savePreference('agent-office-selected-agent', id);
   }
-  function editWorkspace(value: string) {
-    workspaceTouched.current = true;
-    setWorkspace(value); setTaskError('');
-    savePreference('agent-office-workspace', value);
+  async function saveProject(path: string | null, quiet = false) {
+    if (!online) { if (!quiet) notice(tr('API OFFLINE'), 'error'); return false; }
+    try {
+      const response = await fetch('/api/office/project', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }), signal: AbortSignal.timeout(15000) });
+      const result = await readResponse(response, 'Could not set the project folder.');
+      const office = result.office as ServerState['office'];
+      const defaultWorkspace = typeof result.defaultWorkspace === 'string' ? result.defaultWorkspace : undefined;
+      setServer(value => value && defaultWorkspace ? { ...value, office, defaultWorkspace } : value);
+      setTaskError('');
+      if (!quiet) notice(path ? 'Project folder set' : 'Using the launch folder');
+      return true;
+    } catch (error) { if (!quiet) notice(error instanceof Error ? error.message : 'Could not set the project folder.', 'error'); return false; }
+  }
+  async function forgetProject(path: string) {
+    try {
+      const response = await fetch('/api/office/project', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ forget: path }), signal: AbortSignal.timeout(15000) });
+      const result = await readResponse(response, 'Could not update recent projects.');
+      setServer(value => value && ({ ...value, office: result.office as ServerState['office'] }));
+      return true;
+    } catch (error) { notice(error instanceof Error ? error.message : 'Could not update recent projects.', 'error'); return false; }
   }
   function changeMode(value: boolean) {
     if (PUBLIC_DEMO || starting.current) return;
@@ -153,7 +175,6 @@ export default function App() {
     if (!isServerState(data)) throw new Error('Invalid state');
     snapshotVersion.current++;
     setServer(data); setOnline(data.connected); setLoading(false); setStateError(!data.connected);
-    if (!workspaceTouched.current) setWorkspace(data.defaultWorkspace);
   }, []);
   const reloadState = useCallback(async () => {
     pendingState.current?.abort();
@@ -204,6 +225,16 @@ export default function App() {
       previewTimers.forEach(window.clearTimeout);
     };
   }, [acceptState, reloadState]);
+  // A folder typed into an older version of this browser becomes the office project once.
+  const legacyTarget = !legacyMigrated.current && online && server?.office && !server.office.projectDirectory && legacyWorkspace &&
+    isAbsoluteWorkspace(legacyWorkspace) && legacyWorkspace !== server.defaultWorkspace ? legacyWorkspace : null;
+  useEffect(() => {
+    if (!legacyTarget) return;
+    legacyMigrated.current = true;
+    const timer = window.setTimeout(() => { void saveProject(legacyTarget, true).finally(() => savePreference('agent-office-workspace', '')); }, 0);
+    return () => window.clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- Runs once for the legacy value.
+  }, [legacyTarget]);
   useEffect(() => { saveDemoRoster(demoRoster); }, [demoRoster]);
   useEffect(() => { savePreference(DEMO_SCHEDULES_KEY, JSON.stringify(demoSchedules)); }, [demoSchedules]);
   useEffect(() => {
@@ -235,7 +266,7 @@ export default function App() {
     demoTimers.current.push(window.setTimeout(() => advance(false), 2000), window.setTimeout(() => advance(true), 7000));
     return id;
   }
-  async function start(prompt: string, permissionMode: PermissionMode, provider: ProviderId) {
+  async function start(prompt: string, permissionMode: PermissionMode, provider: ProviderId, workspace: string) {
     if (starting.current || !prompt.trim() || prompt.length > 10000 || !agents.some(agent => agent.id === resolvedSelected)) return;
     const blocked = !demo && (!online ? 'API OFFLINE' : !server?.providers.some(item => item.id === provider && item.available) ? 'Choose an available AI provider.'
       : tasks.some(task => task.agentId === resolvedSelected && task.status === 'running') ? 'Agent is already working.'
@@ -404,7 +435,7 @@ export default function App() {
       <a className="skip-link" href="#main-content">{tr('Skip to content')}</a>
       <Sidebar view={view} setView={setView} onNew={() => showNew()}/>
       <div className="app-main">
-        <header className="topbar"><div className="crumb"><span><Command size={15}/></span>{' ' + tr('My workspace') + ' '}<b>/</b><strong>{tr(view === 'studio' ? 'Office studio' : view === 'tasks' ? 'Activity & tasks' : view === 'team' ? 'Agent team' : 'Settings')}</strong><ChevronDown size={13}/></div>
+        <header className="topbar"><div className="crumb"><span><Command size={15}/></span>{projectEditable ? <ProjectPill current={workspace} onOpen={() => setProjectOpen(true)}/> : ' ' + tr('My workspace') + ' '}<b>/</b><strong>{tr(view === 'studio' ? 'Office studio' : view === 'tasks' ? 'Activity & tasks' : view === 'team' ? 'Agent team' : 'Settings')}</strong><ChevronDown size={13}/></div>
           <div className="topbar-actions"><time>{formatTime(now)}</time><i/>{PUBLIC_DEMO ? <span className="api-badge on"><Wifi size={14}/>{tr('Demo environment')}</span> : <span className={cliReady ? 'api-badge on' : 'api-badge'}>{cliReady ? <Wifi size={14}/> : <WifiOff size={14}/>} {tr(cliReady ? 'READY' : online ? 'NOT FOUND' : 'API OFFLINE')}</span>}
             {PUBLIC_DEMO ? <span className="mode-btn demo"><Dot status="amber"/>{tr('DEMO MODE')}</span> : <button className={demo ? 'mode-btn demo' : 'mode-btn live'} aria-pressed={demo} onClick={() => changeMode(!demo)}><Dot status={demo ? 'amber' : online ? 'online' : 'failed'}/>{tr(demo ? 'DEMO MODE' : 'LIVE MODE')} <ChevronDown size={13}/></button>}
             <button type="button" className="theme-toggle" aria-label={tr('Dark mode')} aria-pressed={darkMode} title={tr('Dark mode')} onClick={toggleTheme}>
@@ -417,14 +448,15 @@ export default function App() {
             <span>{tr(loading ? 'Loading workspace…' : server ? 'Showing saved activity; the API is offline.' : 'Unable to load workspace')}</span>
             {!loading && <button type="button" onClick={() => { setLoading(true); void reloadState(); }}>{tr('Retry')}</button>}
           </div>}
-          {view === 'studio' && <Studio tasks={tasks} schedules={schedules} onSchedules={openSchedules} onKnowledge={() => setKnowledgeOpen(true)} selected={inspectedAgent} setSelected={selectAgent} selectedTask={selectedTask} setSelectedTask={setSelectedTask} onNew={() => showNew()} onChat={setChatAgent} demo={demo} ready={cliReady}/>}
+          {view === 'studio' && <Studio tasks={tasks} schedules={schedules} onSchedules={openSchedules} onKnowledge={() => setKnowledgeOpen(true)} project={projectEditable && workspace ? workspace : null} onProject={() => setProjectOpen(true)} selected={inspectedAgent} setSelected={selectAgent} selectedTask={selectedTask} setSelectedTask={setSelectedTask} onNew={() => showNew()} onChat={setChatAgent} demo={demo} ready={cliReady}/>}
           {view === 'tasks' && <TaskList tasks={tasks} onSelect={(id, taskId) => { setSelected(id); setSelectedTask(taskId); setView('studio'); }} cancel={cancel} canCancel={demo || online}/>}
           {view === 'team' && <Team tasks={tasks} providers={server?.providers || []} onTask={showNew} onChat={setChatAgent} onSave={saveAgent} onDelete={deleteAgent} connected={demo || online} demo={demo}/>}
-          {view === 'settings' && <Settings workspace={workspace} setWorkspace={editWorkspace} demo={demo} setDemo={changeMode} server={server} online={online} publicPreview={PUBLIC_DEMO}/>}
+          {view === 'settings' && <Settings workspace={workspace} office={server?.office} saveProject={path => saveProject(path)} forgetProject={forgetProject} demo={demo} setDemo={changeMode} server={server} online={online} publicPreview={PUBLIC_DEMO}/>}
         </main>
         <footer><span>© 2026 Agent Office <b>✳</b>{' ' + tr('Made for builders')}</span><span>v0.4.0 <i>·</i>{' ' + tr('Open source')}</span></footer>
       </div>
-      {modal && agents.length > 0 && <NewTask agent={resolvedSelected} setAgent={selectAgent} provider={provider} setProvider={chooseProvider} providers={server?.providers || []} workspace={workspace} setWorkspace={editWorkspace} close={() => setModal(false)} start={start} busy={busy} demo={demo} online={online} agentBusy={tasks.some(task => task.agentId === resolvedSelected && task.status === 'running')} error={taskError}/>}
+      {modal && agents.length > 0 && <NewTask agent={resolvedSelected} setAgent={selectAgent} provider={provider} setProvider={chooseProvider} providers={server?.providers || []} workspace={workspace} close={() => setModal(false)} start={start} busy={busy} demo={demo} online={online} agentBusy={tasks.some(task => task.agentId === resolvedSelected && task.status === 'running')} error={taskError}/>}
+      {projectOpen && projectEditable && <ProjectDialog office={server?.office} current={workspace} save={path => saveProject(path)} forget={forgetProject} online={online} close={() => setProjectOpen(false)}/>}
       {chatAgent && agents.some(agent => agent.id === chatAgent) && <AgentChat key={`${chatAgent}-${demo}`} agent={agents.find(agent => agent.id === chatAgent)!} status={server?.chats?.[chatAgent]}
         providers={server?.providers || []} officeProvider={provider} workspace={workspace} demo={demo} online={online} close={() => setChatAgent(null)}/>}
       {scheduleModal && agents.length > 0 && <ScheduleManager schedules={schedules} tasks={tasks} initialAgent={scheduleModal.agentId} providers={server?.providers || []} defaultProvider={provider} workspace={workspace} demo={demo} online={online}

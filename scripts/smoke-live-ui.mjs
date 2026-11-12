@@ -56,6 +56,8 @@ try {
   await page.waitForSelector('[role="dialog"]')
   await page.$eval('.modal-agent-list button', button => button.click()) // Atlas
   await page.type('#prompt', prompt)
+  await page.$eval('.mission-project .link-btn', button => button.click()) // Override the office project for this task.
+  await page.waitForSelector('#mission-dir')
   await page.$eval('#mission-dir', element => { element.value = ''; element.dispatchEvent(new Event('input', { bubbles: true })) })
   await page.click('#mission-dir', { clickCount: 3 })
   await page.type('#mission-dir', fixture)

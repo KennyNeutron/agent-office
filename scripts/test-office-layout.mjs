@@ -895,3 +895,21 @@ test('the knowledge popup lists each graphify call once, newest first, for all p
   const queries = knowledgeQueries(tasks)
   assert.deepEqual(queries.map(query => [query.agentId, query.tool, query.taskId, query.status]), [['nova', 'query_graph', 'n', 'running'], ['atlas', 'search', 'a', 'completed']])
 })
+
+test('the project files rest on the free end of the reception counter, clear of the desk props', async () => {
+  const { PROJECT_FILES, projectFilesPosition } = await import('../src/scene/projectFilesLayout.ts')
+  const { DESK_CLOCK } = await import('../src/scene/timepieceLayout.ts')
+  const counter = RECEPTION_PROPS.counterTop
+  const box = { x: PROJECT_FILES.x, z: PROJECT_FILES.z, width: PROJECT_FILES.width, depth: PROJECT_FILES.depth }
+  assert.ok(Math.abs(box.x) + box.width / 2 < counter.width / 2 - .05, 'organizer overhangs the counter end')
+  assert.ok(Math.abs(box.z) + box.depth / 2 < counter.depth / 2 - .05, 'organizer overhangs the counter front or back')
+  assert.equal(PROJECT_FILES.y, counter.y + counter.height / 2, 'organizer must sit on the counter top')
+  const apart = (a, b) => Math.abs(a.x - b.x) >= (a.width + b.width) / 2 || Math.abs(a.z - b.z) >= (a.depth + b.depth) / 2
+  for (const prop of [RECEPTION_PROPS.monitor, RECEPTION_PROPS.accentPad, DESK_CLOCK]) assert.ok(apart(box, prop), 'organizer overlaps a desk prop')
+  for (const count of [0, 1, 4, 20]) for (const spacing of ['compact', 'regular', 'spacious']) {
+    const layout = makeOfficeLayout(makeTeam(count), spacing)
+    const reception = layout.amenities.find(item => item.id === 'reception')
+    const [x, y, z] = projectFilesPosition(layout)
+    assert.deepEqual([x - reception.x, y, z - reception.z].map(value => +value.toFixed(6)), [PROJECT_FILES.x, PROJECT_FILES.y, PROJECT_FILES.z])
+  }
+})

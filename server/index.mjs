@@ -24,6 +24,8 @@ const SCHEDULE_STORE = join(dirname(STORE), 'schedules.json')
 const KNOWLEDGE_STORE = join(dirname(STORE), 'knowledge.json')
 const KNOWLEDGE_MCP = join(HERE, 'knowledge-mcp.mjs')
 const CHAT_STORE = join(dirname(STORE), 'chats.json')
+const OFFICE_STORE = join(dirname(STORE), 'office.json')
+const MAX_RECENT_PROJECTS = 8
 // A chat reply that takes longer than this is stopped.
 const CHAT_TIMEOUT_MS = Math.max(1000, Number(process.env.AGENT_OFFICE_CHAT_TIMEOUT_MS) || 10 * 60_000)
 // How often due schedules are checked. Tests shorten it.
@@ -44,6 +46,12 @@ let knowledgePersistChain = Promise.resolve()
 let knowledgeReadable = true
 // Bumped on every knowledge change so open browsers know to refetch.
 let knowledgeVersion = 0
+// The office-wide project folder used by tasks, schedules and chats unless one names another.
+let office = { projectDirectory: null, recentProjects: [] }
+let officePersistChain = Promise.resolve()
+let officeReadable = true
+const launchDirectory = () => process.env.AGENT_OFFICE_WORKSPACE || ROOT
+const officeProject = () => office.projectDirectory || launchDirectory()
 // Conversations by agent id, plus the reply currently being generated for each agent.
 let chats = {}
 let chatsPersistChain = Promise.resolve()
@@ -100,14 +108,15 @@ function snapshot() {
     instanceId: INSTANCE_ID,
     codexAvailable: providers.find(provider => provider.id === 'codex').available,
     providers: providers.map(({ id, name, available }) => ({ id, name, available })),
-    defaultWorkspace: process.env.AGENT_OFFICE_WORKSPACE || ROOT,
+    defaultWorkspace: officeProject(),
+    office: { projectDirectory: office.projectDirectory, recentProjects: office.recentProjects, launchDirectory: launchDirectory() },
     agents,
     tasks: tasks.map(visible),
     schedules,
     knowledgeVersion,
     chats: Object.fromEntries([...new Set([...Object.keys(chats), ...chatRuns.keys()])].map(id =>
       [id, { version: chatVersions.get(id) ?? 0, pending: chatRuns.has(id), count: chats[id]?.length ?? 0 }])),
-    storage: { historyReadable, agentsReadable, schedulesReadable, knowledgeReadable, chatsReadable, historyWriteError },
+    storage: { historyReadable, agentsReadable, schedulesReadable, knowledgeReadable, chatsReadable, officeReadable, historyWriteError },
   }
 }
 
@@ -313,6 +322,55 @@ app.delete('/api/agents/:id', async (req, res) => {
   } catch { res.status(500).json({ error: 'Could not save agent profile.' }) }
 })
 
+// ---- Office project ---------------------------------------------------------
+const validOffice = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value) &&
+  (value.projectDirectory === null || (typeof value.projectDirectory === 'string' && isAbsolute(value.projectDirectory) && value.projectDirectory.length <= 1000)) &&
+  Array.isArray(value.recentProjects) && value.recentProjects.length <= MAX_RECENT_PROJECTS &&
+  value.recentProjects.every(item => typeof item === 'string' && isAbsolute(item) && item.length <= 1000)
+async function loadOffice() {
+  try {
+    const stored = JSON.parse(await readFile(OFFICE_STORE, 'utf8'))
+    if (validOffice(stored)) office = { projectDirectory: stored.projectDirectory, recentProjects: stored.recentProjects }
+    else throw new Error('Invalid office.json; using the launch folder without overwriting the file.')
+  } catch (error) {
+    if (error.code !== 'ENOENT') { officeReadable = false; console.error('Could not load office settings:', error.message) }
+  }
+}
+function changeOffice(edit) {
+  const operation = officePersistChain.then(async () => {
+    if (!officeReadable) throw new Error('Existing office settings are unreadable; refusing to overwrite them.')
+    const next = edit(office)
+    await atomicWrite(OFFICE_STORE, JSON.stringify(next, null, 2))
+    office = next
+    notifyState()
+    return next
+  })
+  officePersistChain = operation.then(() => {}, error => console.error('Could not save office settings:', error.message))
+  return operation
+}
+// Set the office project ({ path }), return to the launch folder ({ path: null }), or forget a recent one ({ forget }).
+app.put('/api/office/project', async (req, res) => {
+  const { path, forget } = req.body || {}
+  if (!officeReadable) return res.status(503).json({ error: 'Office settings are unreadable. Preserve and repair office.json first.' })
+  if (typeof forget === 'string') {
+    try { await changeOffice(current => ({ ...current, recentProjects: current.recentProjects.filter(item => item !== forget) })); return res.json({ office }) }
+    catch { return res.status(500).json({ error: 'Could not save office settings.' }) }
+  }
+  let canonical = null
+  if (path !== null) {
+    if (typeof path !== 'string' || !path.trim() || path.length > 1000 || path.includes('\0') || !isAbsolute(path.trim())) return res.status(400).json({ error: 'Enter an absolute project directory path.' })
+    try {
+      if (!statSync(path.trim()).isDirectory()) return res.status(400).json({ error: 'That path is not a folder.' })
+      canonical = realpathSync(path.trim())
+    } catch { return res.status(400).json({ error: 'Project directory was not found.' }) }
+  }
+  try {
+    await changeOffice(current => ({ projectDirectory: canonical,
+      recentProjects: canonical ? [canonical, ...current.recentProjects.filter(item => item !== canonical)].slice(0, MAX_RECENT_PROJECTS) : current.recentProjects }))
+    res.json({ office, defaultWorkspace: officeProject() })
+  } catch { res.status(500).json({ error: 'Could not save office settings.' }) }
+})
+
 // ---- Agent chat -------------------------------------------------------------
 // Same contract as the roster: serialized, atomic, acknowledged after the write.
 function changeChats(edit, agentId) {
@@ -358,7 +416,7 @@ app.post('/api/agents/:id/chat', async (req, res) => {
   const provider = providers.find(item => item.id === (agent.provider || fallbackProvider || 'codex'))
   if (!provider) return res.status(400).json({ error: 'Unknown AI provider.' })
   if (!provider.available) return res.status(503).json({ error: `${provider.name} was not found. Install and authenticate the CLI, then restart Agent Office.` })
-  const workspace = typeof requestedWorkspace === 'string' && requestedWorkspace ? requestedWorkspace : process.env.AGENT_OFFICE_WORKSPACE || ROOT
+  const workspace = typeof requestedWorkspace === 'string' && requestedWorkspace ? requestedWorkspace : officeProject()
   if (workspace.length > 1000 || workspace.includes('\0') || !isAbsolute(workspace)) return res.status(400).json({ error: 'Enter an absolute project directory path.' })
   let canonical
   try {
@@ -620,7 +678,9 @@ const reply = (status, body) => ({ status, body })
 async function launchTask(request, schedule = null) {
   if (!historyReadable) return reply(503, { error: 'Task history is unreadable. Preserve and repair the data file before launching tasks.' })
   if (!agentsReadable) return reply(503, { error: 'Agent profiles are unreadable. Preserve and repair the data file before launching tasks.' })
-  const { prompt, agentId, workspace } = request
+  const { prompt, agentId } = request
+  // Requests that name no folder work in the office project.
+  const workspace = request.workspace == null || request.workspace === '' ? officeProject() : request.workspace
   // An in-flight roster write must finish before resolving the selected agent.
   // Otherwise deletion could commit after this task reserves that same profile.
   await agentsPersistChain
@@ -777,7 +837,7 @@ app.post('/api/tasks/:id/cancel', async (req, res) => {
   }
 })
 
-await Promise.all([loadHistory(), loadAgents(), loadSchedules(), loadKnowledge(), loadChats()])
+await Promise.all([loadHistory(), loadAgents(), loadSchedules(), loadKnowledge(), loadChats(), loadOffice()])
 if (existsSync(join(ROOT, 'dist', 'index.html'))) {
   app.use(express.static(join(ROOT, 'dist')))
   app.get('/', (_req, res) => res.sendFile(join(ROOT, 'dist', 'index.html')))
@@ -826,6 +886,7 @@ export function shutdown() {
     }))
     await agentsPersistChain
     await chatsPersistChain
+    await officePersistChain
     await schedulesPersistChain
     await knowledgePersistChain
     if (historyReadable) await persistHistory().catch(() => { process.exitCode = 1 })

@@ -3,7 +3,7 @@ import { OrbitControls, OrthographicCamera, RoundedBox } from '@react-three/drei
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import type { Group, Mesh } from 'three'
 import { MathUtils, Vector3 } from 'three'
-import { CalendarClock, Moon, Network } from 'lucide-react'
+import { CalendarClock, FolderOpen, Moon, Network } from 'lucide-react'
 import { type AgentId, type OfficeSchedule, type OfficeTask } from '../types'
 import { DEPARTMENTS, useAgents } from '../agents'
 import { OfficeCampus } from './OfficeCampus'
@@ -26,11 +26,14 @@ import { KnowledgeGraph } from './KnowledgeGraph'
 import { useKnowledgeReaders } from './useKnowledgeReaders'
 import { KNOWLEDGE_LABEL, knowledgeGraphPosition, type KnowledgeReader } from './knowledgeGraphLayout'
 import type { IdlePose } from './avatarRig'
+import { ProjectFiles } from './ProjectFiles'
+import { PROJECT_LABEL, projectFilesPosition } from './projectFilesLayout'
+import { folderName } from '../components/dataFlow'
 import { idleStatus, resolveAgentPose, selectAgentTask, TERMINAL_POSE_MS, type AgentPose } from './agentBehavior'
 
 // Project world positions to the existing React DOM layer without creating
 // separate React roots inside Three.js (which can race during unmount).
-function BadgeProjector({ overlayId, seats, sectors, avatars, board, knowledge, translate }: { translate: (text: string) => string; overlayId: string; seats: Seat[]; sectors: OfficeLayout['sectors']; avatars: RefObject<Map<string, Group>>; board: [number, number, number]; knowledge: [number, number, number] }) {
+function BadgeProjector({ overlayId, seats, sectors, avatars, board, knowledge, project, translate }: { translate: (text: string) => string; overlayId: string; seats: Seat[]; sectors: OfficeLayout['sectors']; avatars: RefObject<Map<string, Group>>; board: [number, number, number]; knowledge: [number, number, number]; project: [number, number, number] }) {
   const point = useRef(new Vector3())
   const labels = useRef<Map<string, HTMLSpanElement>>(new Map())
   useEffect(() => {
@@ -78,6 +81,7 @@ function BadgeProjector({ overlayId, seats, sectors, avatars, board, knowledge, 
     for (const sector of sectors) place(`sector:${sector.key}`, sector.center[0], 3.9, sector.center[2] - sector.depth / 2 + .3)
     place('board:schedule', board[0], BOARD_LABEL_HEIGHT, board[2])
     place('board:knowledge', knowledge[0] + KNOWLEDGE_LABEL.dx, KNOWLEDGE_LABEL.y, knowledge[2] + KNOWLEDGE_LABEL.dz)
+    place('board:project', project[0] + PROJECT_LABEL.dx, PROJECT_LABEL.y, project[2] + PROJECT_LABEL.dz)
   })
   return null
 }
@@ -231,12 +235,13 @@ function Workstation({ seat, simulation, selected, pose, onSelect, preferences, 
   </group>
 }
 
-function Studio({ translate, selected, tasks, schedules, readers, onOpenSchedules, onOpenKnowledge, onSelect, now, overlayId, layout, visibleSeats, distantSeats, overview, preferences }: { selected: AgentId; tasks: OfficeTask[]; schedules: OfficeSchedule[]; readers: KnowledgeReader[]; onOpenSchedules: () => void; onOpenKnowledge: () => void; onSelect: (value: AgentId) => void; now: number; overlayId: string; layout: OfficeLayout; visibleSeats: Seat[]; distantSeats: Seat[]; overview: boolean; preferences: OfficePreferences; translate: (text: string) => string }) {
+function Studio({ translate, selected, tasks, schedules, readers, onOpenSchedules, onOpenKnowledge, onOpenProject, onSelect, now, overlayId, layout, visibleSeats, distantSeats, overview, preferences }: { selected: AgentId; tasks: OfficeTask[]; schedules: OfficeSchedule[]; readers: KnowledgeReader[]; onOpenSchedules: () => void; onOpenKnowledge: () => void; onOpenProject: (() => void) | null; onSelect: (value: AgentId) => void; now: number; overlayId: string; layout: OfficeLayout; visibleSeats: Seat[]; distantSeats: Seat[]; overview: boolean; preferences: OfficePreferences; translate: (text: string) => string }) {
   const { size } = useThree()
   const avatars = useRef(new Map<string, Group>())
   const agents = useAgents()
   const board = useMemo(() => scheduleBoardPosition(layout), [layout])
   const knowledge = useMemo(() => knowledgeGraphPosition(layout), [layout])
+  const projectFiles = useMemo(() => projectFilesPosition(layout), [layout])
   const [initialSimulation] = useState(() => reconcileOfficeSimulation(layout, new Map(), new Set(tasks.filter(task => task.status === 'running').map(task => task.agentId))))
   const simulation = useRef<OfficeSimulation>(initialSimulation)
   useLayoutEffect(() => {
@@ -283,14 +288,15 @@ function Studio({ translate, selected, tasks, schedules, readers, onOpenSchedule
     <OfficePetsView pets={pets}/>
     <ScheduleBoard layout={layout} schedules={schedules} agents={agents} accent={preferences.accent} onOpen={onOpenSchedules}/>
     <KnowledgeGraph layout={layout} readers={readers} agents={agents} accent={preferences.accent} animate={preferences.motion !== 'off'} onOpen={onOpenKnowledge}/>
-    <BadgeProjector translate={translate} overlayId={overlayId} seats={visibleSeats} sectors={layout.sectors} avatars={avatars} board={board} knowledge={knowledge}/>
+    {onOpenProject && <ProjectFiles layout={layout} accent={preferences.accent} animate={preferences.motion !== 'off'} onOpen={onOpenProject}/>}
+    <BadgeProjector translate={translate} overlayId={overlayId} seats={visibleSeats} sectors={layout.sectors} avatars={avatars} board={board} knowledge={knowledge} project={projectFiles}/>
     <OrthographicCamera key={`${cameraKey}-camera`} makeDefault position={[target[0] + 15, target[1] + 17, target[2] + 19]} zoom={overview ? overviewZoom : 42} near={.1} far={Math.max(250, layout.width + layout.depth + 100)} />
     <OrbitControls key={`${cameraKey}-controls`} makeDefault target={target} minPolarAngle={.25} maxPolarAngle={1.46} enablePan enableDamping dampingFactor={.08} minZoom={overview ? Math.min(2, overviewZoom) : 12} maxZoom={165} />
     <FollowSelected key={`${cameraKey}-${center[0]}-${center[2]}`} selected={selected} overview={overview} avatars={avatars} center={center}/>
   </>
 }
 
-export default function OfficeScene({ selected, tasks, schedules = [], onOpenSchedules = () => {}, onOpenKnowledge = () => {}, onSelect, overview = false }: { selected: AgentId; tasks: OfficeTask[]; schedules?: OfficeSchedule[]; onOpenSchedules?: (agentId?: AgentId | null) => void; onOpenKnowledge?: () => void; onSelect: (value: AgentId) => void; overview?: boolean }) {
+export default function OfficeScene({ selected, tasks, schedules = [], onOpenSchedules = () => {}, onOpenKnowledge = () => {}, project = null, onOpenProject, onSelect, overview = false }: { selected: AgentId; tasks: OfficeTask[]; schedules?: OfficeSchedule[]; onOpenSchedules?: (agentId?: AgentId | null) => void; onOpenKnowledge?: () => void; /** The office project folder; the reception project files appear only when set. */ project?: string | null; onOpenProject?: () => void; onSelect: (value: AgentId) => void; overview?: boolean }) {
   const { t: tr } = useLanguage()
   const agents = useAgents()
   const { preferences } = useOfficePreferences()
@@ -363,7 +369,7 @@ export default function OfficeScene({ selected, tasks, schedules = [], onOpenSch
   }, [tasks, now])
   return <div className="office-3d-shell" data-office-theme={preferences.theme} data-office-motion={effectivePreferences.motion} data-layout-transition={presentation.phase} aria-busy={presentation.phase !== 'ready'}>
     <Canvas shadows dpr={[1, 1.5]} gl={{ antialias: true, alpha: false }} onPointerMissed={() => { }}>
-      <Studio key={presentation.key} translate={tr} selected={selected} tasks={tasks} schedules={schedules} readers={readers} onOpenSchedules={() => onOpenSchedules(null)} onOpenKnowledge={onOpenKnowledge} onSelect={onSelect} now={now} overlayId={overlayId} layout={layout} visibleSeats={visibleSeats} distantSeats={distantSeats} overview={overview} preferences={effectivePreferences}/>
+      <Studio key={presentation.key} translate={tr} selected={selected} tasks={tasks} schedules={schedules} readers={readers} onOpenSchedules={() => onOpenSchedules(null)} onOpenKnowledge={onOpenKnowledge} onOpenProject={project && onOpenProject ? onOpenProject : null} onSelect={onSelect} now={now} overlayId={overlayId} layout={layout} visibleSeats={visibleSeats} distantSeats={distantSeats} overview={overview} preferences={effectivePreferences}/>
     </Canvas>
     {presentation.phase === 'closing' && <div className="scene-layout-loading" role="status">{tr('Loading 3D office…')}</div>}
     <div id={overlayId} className={`scene-phase-overlay${overview ? ' is-overview' : ''}`} aria-label={tr('Current phase')}>
@@ -383,6 +389,10 @@ export default function OfficeScene({ selected, tasks, schedules = [], onOpenSch
         aria-label={readers.length ? `Open knowledge graph (${readers.length} agent${readers.length > 1 ? 's' : ''} reading)` : 'Open knowledge graph'}>
         <Network size={12} aria-hidden="true"/>Knowledge{readers.length > 0 && <b>{readers.length}</b>}
       </button>
+      {project && onOpenProject && <button type="button" className="scene-board-label scene-project-label" data-board="project" onClick={onOpenProject}
+        title={project} aria-label={`Project folder: ${project}. Change`}>
+        <FolderOpen size={12} aria-hidden="true"/>{folderName(project)}
+      </button>}
       {layout.sectors.map(sector => <span key={sector.key} className="scene-sector-label" data-sector={sector.key}>
         <i style={{ background: preferences.sectorColors[sector.id] || DEPARTMENTS.find(dep => dep.id === sector.id)?.color }}/>{overview ? tr(DEPARTMENTS.find(dep => dep.id === sector.id)?.name || sector.id).split(/[ &]+/)[0] : tr(DEPARTMENTS.find(dep => dep.id === sector.id)?.name || sector.id)} · {sector.count}
       </span>)}

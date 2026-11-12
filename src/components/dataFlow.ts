@@ -26,6 +26,11 @@ export function isServerState(value: unknown): value is ServerState {
     (value.schedules == null || validStoredSchedules(value.schedules));
 }
 
+/** The last path segment, for compact labels. */
+export function folderName(path: string): string {
+  return path.replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) || path;
+}
+
 export function isAbsoluteWorkspace(path: string): boolean {
   return path.length <= 1000 && (path.startsWith('/') || /^[a-z]:[\\/]/i.test(path) || /^\\\\[^\\]+\\[^\\]+/.test(path));
 }

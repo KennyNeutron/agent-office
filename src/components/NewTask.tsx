@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { ArrowRight, Check, ShieldCheck, X } from 'lucide-react';
+import { ArrowRight, Check, FolderOpen, ShieldCheck, X } from 'lucide-react';
 import type { AgentId, PermissionMode, ProviderId, ProviderInfo } from '../types';
 import { useAgents } from '../agents';
 import { useLanguage } from '../locales/i18n';
 import { Avatar } from './Avatar';
 import { Modal } from './Modal';
-import { isAbsoluteWorkspace } from './dataFlow';
+import { folderName, isAbsoluteWorkspace } from './dataFlow';
 
 const defaultProviders: ProviderInfo[] = [
   { id: 'codex', name: 'Codex CLI', available: false },
@@ -13,13 +13,13 @@ const defaultProviders: ProviderInfo[] = [
   { id: 'antigravity', name: 'Antigravity CLI', available: false },
 ];
 
-export function NewTask({ agent, setAgent, workspace, setWorkspace, close, start, busy, demo, provider: officeProvider, setProvider: setOfficeProvider, providers, online, agentBusy, error }: {
+export function NewTask({ agent, setAgent, workspace: officeWorkspace, close, start, busy, demo, provider: officeProvider, setProvider: setOfficeProvider, providers, online, agentBusy, error }: {
   agent: AgentId;
   setAgent: (a: AgentId) => void;
+  /** The office project; a single task may use another folder. */
   workspace: string;
-  setWorkspace: (v: string) => void;
   close: () => void;
-  start: (prompt: string, permissionMode: PermissionMode, provider: ProviderId) => void;
+  start: (prompt: string, permissionMode: PermissionMode, provider: ProviderId, workspace: string) => void;
   busy: boolean;
   demo: boolean;
   /** The office's last-chosen provider, used when the agent has no default. */
@@ -33,6 +33,8 @@ export function NewTask({ agent, setAgent, workspace, setWorkspace, close, start
   const { t: tr } = useLanguage();
   const agents = useAgents();
   const [prompt, setPrompt] = useState('');
+  const [otherFolder, setOtherFolder] = useState<string | null>(null);
+  const workspace = otherFolder ?? officeWorkspace;
   // Each agent's default provider and permissions pre-fill the form; the user can still override them.
   const defaultsFor = (id: AgentId) => {
     const profile = agents.find(item => item.id === id);
@@ -50,7 +52,7 @@ export function NewTask({ agent, setAgent, workspace, setWorkspace, close, start
     : agentBusy ? 'Agent is already working.' : !isAbsoluteWorkspace(workspace) ? 'Enter an absolute project path.' : '';
 
   return <Modal close={close} busy={busy} labelledBy="new-mission">
-    <form onSubmit={event => { event.preventDefault(); if (!busy && !blocked && prompt.trim() && agents.some(item => item.id === agent)) start(prompt, permissionMode, provider); }}>
+    <form onSubmit={event => { event.preventDefault(); if (!busy && !blocked && prompt.trim() && agents.some(item => item.id === agent)) start(prompt, permissionMode, provider, workspace.trim()); }}>
       <div className="modal-title">
         <div><span className="eyebrow"><span /> {tr('A NEW MISSION')}</span><h2 id="new-mission">{tr('Create a task')} <b>✳</b></h2></div>
         <button type="button" onClick={close} disabled={busy} aria-label={tr('Close')}><X size={19}/></button>
@@ -87,8 +89,13 @@ export function NewTask({ agent, setAgent, workspace, setWorkspace, close, start
               : 'Interactive approval prompts are unavailable in background runs.')}
         </p>
       </>}
-      {!import.meta.env.MODE.includes('public-demo') && <><label htmlFor="mission-dir">{tr('PROJECT DIRECTORY')}</label>
-      <input id="mission-dir" maxLength={1000} value={workspace} onChange={event => setWorkspace(event.target.value)} placeholder={tr('Absolute project path')}/></>}
+      {!import.meta.env.MODE.includes('public-demo') && !demo && <><label htmlFor="mission-dir">{tr('PROJECT DIRECTORY')}</label>
+      {otherFolder === null
+        ? <div className="mission-project"><FolderOpen size={15}/><span title={officeWorkspace}><strong>{folderName(officeWorkspace)}</strong>{officeWorkspace}</span>
+            <button type="button" className="link-btn" onClick={() => setOtherFolder(officeWorkspace)}>Use another folder</button></div>
+        : <><input id="mission-dir" maxLength={1000} value={otherFolder} onChange={event => setOtherFolder(event.target.value)} placeholder={tr('Absolute project path')}/>
+            <button type="button" className="link-btn mission-project-reset" onClick={() => setOtherFolder(null)}>Use the office project ({folderName(officeWorkspace)})</button></>}
+      </>}
       </fieldset>
       {blocked && <p id="task-blocked" className="form-error" role="status">{tr(blocked)}</p>}
       {error && <p id="task-error" className="form-error" role="alert">{error}</p>}

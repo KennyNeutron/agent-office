@@ -264,6 +264,43 @@ test('agent default provider and permissions apply to tasks and to schedules tha
   await finish(again.body.task.id)
 })
 
+test('the office project folder is shared by tasks and chats, validated, remembered and persisted', async t => {
+  const f = await fixture(t)
+  const project = join(f.root, 'office project'); await mkdir(project)
+  const other = join(f.root, 'other project'); await mkdir(other)
+  const put = body => f.request('/api/office/project', 'PUT', body)
+  let state = (await f.request('/api/state')).body
+  assert.equal(state.office.projectDirectory, null); assert.equal(state.defaultWorkspace, state.office.launchDirectory)
+
+  assert.equal((await put({ path: 'relative/folder' })).status, 400)
+  assert.equal((await put({ path: join(f.root, 'missing') })).status, 400)
+  assert.equal((await put({ path: join(f.root, 'fake.cjs') })).status, 400, 'A file is not a project folder')
+  const set = await put({ path: project })
+  assert.equal(set.status, 200); assert.equal(set.body.defaultWorkspace, project)
+
+  // A task or chat that names no folder works in the office project.
+  const task = await f.request('/api/tasks', 'POST', { agentId: 'atlas', provider: 'codex', prompt: 'Safe fixture task' })
+  assert.equal(task.status, 201); assert.equal(task.body.task.workspace, project)
+  await until(async () => (await f.task(task.body.task.id)).status !== 'running')
+  assert.equal(JSON.parse(await readFile(f.capture, 'utf8')).cwd, project)
+  await f.request('/api/agents/nova/chat', 'POST', { message: 'Hi', provider: 'codex' })
+  await until(async () => !(await f.request('/api/agents/nova/chat')).body.pending)
+  assert.equal(JSON.parse(await readFile(f.capture, 'utf8')).cwd, project)
+  // A single task may still name another folder.
+  const once = await f.launch('codex', { workspace: other })
+  assert.equal(once.body.task.workspace, other)
+  await until(async () => (await f.task(once.body.task.id)).status !== 'running')
+
+  await put({ path: other })
+  await f.stop(); await f.start()
+  state = (await f.request('/api/state')).body
+  assert.equal(state.defaultWorkspace, other)
+  assert.deepEqual(state.office.recentProjects, [other, project])
+  assert.deepEqual((await put({ forget: project })).body.office.recentProjects, [other])
+  const reset = await put({ path: null })
+  assert.equal(reset.body.office.projectDirectory, null); assert.equal(reset.body.defaultWorkspace, state.office.launchDirectory)
+})
+
 test('agents answer chat messages with their default provider, read-only, keeping the conversation', async t => {
   const f = await fixture(t)
   const chat = (agentId, body) => f.request(`/api/agents/${agentId}/chat`, 'POST', body)
@@ -385,7 +422,7 @@ test('unreadable or malformed private stores are preserved and never silently re
   for (const contents of ['[null]', '{broken', '{"not":"an array"}']) {
     const f = await fixture(t, 'success', { 'tasks.json': contents, 'agents.json': '{broken' })
     const state = (await f.request('/api/state')).body
-    assert.deepEqual(state.storage, { historyReadable: false, agentsReadable: false, schedulesReadable: true, knowledgeReadable: true, chatsReadable: true, historyWriteError: false })
+    assert.deepEqual(state.storage, { historyReadable: false, agentsReadable: false, schedulesReadable: true, knowledgeReadable: true, chatsReadable: true, officeReadable: true, historyWriteError: false })
     assert.equal((await f.launch()).status, 503)
     const create = await f.request('/api/agents', 'POST', { name:'Safe',role:'QA',specialty:'Audit',department:'quality',color:'#123456' })
     assert.equal(create.status, 500)

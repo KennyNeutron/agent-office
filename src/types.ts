@@ -77,7 +77,9 @@ export interface OfficeSchedule extends ScheduleInput {
 export interface ChatMessage { id: string; role: 'user' | 'agent'; text: string; at: string; provider?: ProviderId; error?: boolean }
 /** Per-agent conversation status in the state snapshot; open chat windows refetch when `version` changes. */
 export interface ChatStatus { version: number; pending: boolean; count: number }
-export interface ServerState { connected: boolean; codexAvailable: boolean; providers: ProviderInfo[]; defaultWorkspace: string; tasks: OfficeTask[]; agents: OfficeAgent[]; schedules?: OfficeSchedule[]; knowledgeVersion?: number; chats?: Record<AgentId, ChatStatus> }
+/** The office-wide project folder. `projectDirectory` is null while the office uses the folder it was launched from. */
+export interface OfficeSettings { projectDirectory: string | null; recentProjects: string[]; launchDirectory: string }
+export interface ServerState { connected: boolean; codexAvailable: boolean; providers: ProviderInfo[]; defaultWorkspace: string; tasks: OfficeTask[]; agents: OfficeAgent[]; schedules?: OfficeSchedule[]; knowledgeVersion?: number; chats?: Record<AgentId, ChatStatus>; office?: OfficeSettings }
 /** Editable fields of a team knowledge note. */
 export interface NoteInput { title: string; body: string; tags: string[]; files: string[] }
 /** A durable note in a project's team knowledge base (drafts await the user's review). */

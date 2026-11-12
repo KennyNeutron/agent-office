@@ -211,6 +211,8 @@ async function flowRegressions(browser) {
   assert.equal(await page.$eval('.modal-bottom .primary-btn', item => item.disabled), true, 'Disconnected API must block available provider')
   assert.match(await page.$eval('#task-blocked', item => item.textContent), /API OFFLINE/)
   await emitState(page, state)
+  await page.$eval('.mission-project .link-btn', button => button.click()) // Override the office project for this task.
+  await page.waitForSelector('#mission-dir')
   await page.$eval('#mission-dir', item => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(item, '')
     item.dispatchEvent(new Event('input', { bubbles: true }))

@@ -1,13 +1,16 @@
 import { FolderOpen, Radio, ShieldCheck, Palette } from 'lucide-react';
-import type { ServerState } from '../types';
+import type { OfficeSettings, ServerState } from '../types';
+import { ProjectForm } from '../components/ProjectPicker';
 import { useLanguage } from '../locales/i18n';
 import { useOfficePreferences } from '../scene/OfficePreferencesContext';
 import { DEFAULT_OFFICE_PREFERENCES, type OfficeTheme, type OfficeSpacing, type OfficeMotion } from '../scene/officePreferences';
 import { DEPARTMENTS } from '../agents';
 
-export function Settings({ workspace, setWorkspace, demo, setDemo, server, online, publicPreview = false }: {
+export function Settings({ workspace, office, saveProject, forgetProject, demo, setDemo, server, online, publicPreview = false }: {
   workspace: string;
-  setWorkspace: (v: string) => void;
+  office: OfficeSettings | undefined;
+  saveProject: (path: string | null) => Promise<boolean>;
+  forgetProject: (path: string) => Promise<boolean>;
   demo: boolean;
   setDemo: (v: boolean) => void;
   server: ServerState | null;
@@ -47,10 +50,8 @@ export function Settings({ workspace, setWorkspace, demo, setDemo, server, onlin
         <button className="office-reset" type="button" onClick={() => updatePreferences(DEFAULT_OFFICE_PREFERENCES)}>{tr('Restore office defaults')}</button>
       </section>
       {!publicPreview && <section className="setting-card">
-        <div className="setting-heading"><FolderOpen size={22}/><div><h2>{tr('Project directory')}</h2><p>{tr('Choose where your agents work and which data you want to see.')}</p></div></div>
-        <label htmlFor="path">{tr('WORKSPACE PATH')}</label>
-        <input id="path" maxLength={1000} value={workspace} onChange={event => setWorkspace(event.target.value)} placeholder="C:\\path\\to\\project"/>
-        <p>{tr('One task per project folder')}</p>
+        <div className="setting-heading"><FolderOpen size={22}/><div><h2>{tr('Project directory')}</h2><p>Set once for the whole office. Saved on this computer, so every browser and tab uses it.</p></div></div>
+        <ProjectForm key={workspace} office={office} current={workspace} save={saveProject} forget={forgetProject} online={online}/>
       </section>}
       {!publicPreview && <section className="setting-card">
         <div className="setting-heading"><Radio size={22}/><div><h2>{tr('Data source')}</h2><p>{tr('Choose the CLI used for each task.')}</p></div></div>
