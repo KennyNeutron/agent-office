@@ -8,6 +8,7 @@ import { Dot } from './components/Avatar';
 import { Sidebar } from './components/Sidebar';
 import { NewTask } from './components/NewTask';
 import { ScheduleManager } from './components/ScheduleManager';
+import { AgentChat } from './components/AgentChat';
 import { KnowledgePanel } from './components/KnowledgePanel';
 import { isDue, makeSchedule, migrateSchedules, recordRun, staleOnceSchedule, validStoredSchedules, validateSchedule } from '../server/schedules.mjs';
 import { isAbsoluteWorkspace, isOfficeTask, isServerState, readResponse } from './components/dataFlow';
@@ -88,6 +89,7 @@ export default function App() {
   const [demoSchedules, setDemoSchedules] = useState<OfficeSchedule[]>(loadDemoSchedules);
   const [scheduleModal, setScheduleModal] = useState<{ agentId: AgentId | null } | null>(null);
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
+  const [chatAgent, setChatAgent] = useState<AgentId | null>(null);
   const [savedWorkspace] = useState(() => readPreference('agent-office-workspace'));
   const [workspace, setWorkspace] = useState(savedWorkspace ?? '');
   const [officePreferences, setOfficePreferences] = useState(loadOfficePreferences);
@@ -415,14 +417,16 @@ export default function App() {
             <span>{tr(loading ? 'Loading workspace…' : server ? 'Showing saved activity; the API is offline.' : 'Unable to load workspace')}</span>
             {!loading && <button type="button" onClick={() => { setLoading(true); void reloadState(); }}>{tr('Retry')}</button>}
           </div>}
-          {view === 'studio' && <Studio tasks={tasks} schedules={schedules} onSchedules={openSchedules} onKnowledge={() => setKnowledgeOpen(true)} selected={inspectedAgent} setSelected={selectAgent} selectedTask={selectedTask} setSelectedTask={setSelectedTask} onNew={() => showNew()} demo={demo} ready={cliReady}/>}
+          {view === 'studio' && <Studio tasks={tasks} schedules={schedules} onSchedules={openSchedules} onKnowledge={() => setKnowledgeOpen(true)} selected={inspectedAgent} setSelected={selectAgent} selectedTask={selectedTask} setSelectedTask={setSelectedTask} onNew={() => showNew()} onChat={setChatAgent} demo={demo} ready={cliReady}/>}
           {view === 'tasks' && <TaskList tasks={tasks} onSelect={(id, taskId) => { setSelected(id); setSelectedTask(taskId); setView('studio'); }} cancel={cancel} canCancel={demo || online}/>}
-          {view === 'team' && <Team tasks={tasks} providers={server?.providers || []} onTask={showNew} onSave={saveAgent} onDelete={deleteAgent} connected={demo || online} demo={demo}/>}
+          {view === 'team' && <Team tasks={tasks} providers={server?.providers || []} onTask={showNew} onChat={setChatAgent} onSave={saveAgent} onDelete={deleteAgent} connected={demo || online} demo={demo}/>}
           {view === 'settings' && <Settings workspace={workspace} setWorkspace={editWorkspace} demo={demo} setDemo={changeMode} server={server} online={online} publicPreview={PUBLIC_DEMO}/>}
         </main>
         <footer><span>© 2026 Agent Office <b>✳</b>{' ' + tr('Made for builders')}</span><span>v0.4.0 <i>·</i>{' ' + tr('Open source')}</span></footer>
       </div>
       {modal && agents.length > 0 && <NewTask agent={resolvedSelected} setAgent={selectAgent} provider={provider} setProvider={chooseProvider} providers={server?.providers || []} workspace={workspace} setWorkspace={editWorkspace} close={() => setModal(false)} start={start} busy={busy} demo={demo} online={online} agentBusy={tasks.some(task => task.agentId === resolvedSelected && task.status === 'running')} error={taskError}/>}
+      {chatAgent && agents.some(agent => agent.id === chatAgent) && <AgentChat key={`${chatAgent}-${demo}`} agent={agents.find(agent => agent.id === chatAgent)!} status={server?.chats?.[chatAgent]}
+        providers={server?.providers || []} officeProvider={provider} workspace={workspace} demo={demo} online={online} close={() => setChatAgent(null)}/>}
       {scheduleModal && agents.length > 0 && <ScheduleManager schedules={schedules} tasks={tasks} initialAgent={scheduleModal.agentId} providers={server?.providers || []} defaultProvider={provider} workspace={workspace} demo={demo} online={online}
         close={() => setScheduleModal(null)} onSave={saveSchedule} onDelete={deleteSchedule} onRun={runSchedule}
         onShowTask={(agentId, taskId) => { setScheduleModal(null); setSelected(agentId); setSelectedTask(taskId); setView('studio'); }}/>}

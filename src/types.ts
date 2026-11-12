@@ -73,7 +73,11 @@ export interface OfficeSchedule extends ScheduleInput {
   lastStatus: 'launched' | 'waiting' | 'failed' | null
   lastMessage: string
 }
-export interface ServerState { connected: boolean; codexAvailable: boolean; providers: ProviderInfo[]; defaultWorkspace: string; tasks: OfficeTask[]; agents: OfficeAgent[]; schedules?: OfficeSchedule[]; knowledgeVersion?: number }
+/** One message in a conversation with an agent. Agent replies note the provider that wrote them. */
+export interface ChatMessage { id: string; role: 'user' | 'agent'; text: string; at: string; provider?: ProviderId; error?: boolean }
+/** Per-agent conversation status in the state snapshot; open chat windows refetch when `version` changes. */
+export interface ChatStatus { version: number; pending: boolean; count: number }
+export interface ServerState { connected: boolean; codexAvailable: boolean; providers: ProviderInfo[]; defaultWorkspace: string; tasks: OfficeTask[]; agents: OfficeAgent[]; schedules?: OfficeSchedule[]; knowledgeVersion?: number; chats?: Record<AgentId, ChatStatus> }
 /** Editable fields of a team knowledge note. */
 export interface NoteInput { title: string; body: string; tags: string[]; files: string[] }
 /** A durable note in a project's team knowledge base (drafts await the user's review). */

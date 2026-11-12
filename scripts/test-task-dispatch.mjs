@@ -155,7 +155,10 @@ process.stdin.on('end', () => {
   }
   if (mode === 'stderr') { process.stderr.write('fixture stderr failure'); process.exitCode = 9; return }
   emit({type:'error',message:'recoverable warning'})
-  const result = provider === 'codex' ? {type:'turn.completed',usage:{input_tokens:2}} : provider === 'claude' ? {type:'result',subtype:'success'} : {event:'result',result:{status:'SUCCESS',response:'done'}}
+  const reply = 'fixture reply from ' + provider
+  if (provider === 'codex') emit({type:'item.completed',item:{type:'agent_message',text:reply}})
+  else if (provider === 'claude') emit({type:'assistant',message:{content:[{type:'text',text:reply}]}})
+  const result = provider === 'codex' ? {type:'turn.completed',usage:{input_tokens:2}} : provider === 'claude' ? {type:'result',subtype:'success'} : {event:'result',result:{status:'SUCCESS',response:reply}}
   process.stdout.write(JSON.stringify(result)) // Intentionally no final newline.
 })
 `)
@@ -261,6 +264,66 @@ test('agent default provider and permissions apply to tasks and to schedules tha
   await finish(again.body.task.id)
 })
 
+test('agents answer chat messages with their default provider, read-only, keeping the conversation', async t => {
+  const f = await fixture(t)
+  const chat = (agentId, body) => f.request(`/api/agents/${agentId}/chat`, 'POST', body)
+  const settled = async agentId => until(async () => {
+    const { body } = await f.request(`/api/agents/${agentId}/chat`)
+    return !body.pending && body.messages.at(-1)?.role === 'agent' && body
+  })
+  const atlas = { name: 'Atlas', role: 'Tech Lead', specialty: 'Architecture & planning', color: '#8b82ff', department: 'architecture' }
+  // Full Access is a task permission; chat replies must stay read-only regardless.
+  await f.request('/api/agents/atlas', 'PUT', { ...atlas, provider: 'claude', permissionMode: 'full-access' })
+
+  assert.equal((await chat('atlas', { message: '   ' })).status, 400)
+  assert.equal((await chat('ghost', { message: 'Hi' })).status, 404)
+  const sent = await chat('atlas', { message: 'What is the plan?', workspace: f.workspace, provider: 'codex' })
+  assert.equal(sent.status, 201); assert.equal(sent.body.provider, 'claude', 'The agent default wins over the office choice')
+  let state = await settled('atlas')
+  assert.deepEqual(state.messages.map(item => [item.role, item.text]), [['user', 'What is the plan?'], ['agent', 'fixture reply from claude']])
+  assert.equal(state.messages[1].provider, 'claude')
+  let capture = JSON.parse(await readFile(f.capture, 'utf8'))
+  assert.ok(capture.args.includes('--disallowedTools') && !capture.args.includes('--dangerously-skip-permissions') && !capture.args.includes('acceptEdits'), 'Chat must not inherit task permissions')
+  assert.match(capture.prompt, /You are Atlas/); assert.match(capture.prompt, /What is the plan\?/)
+  assert.ok((await f.request('/api/state')).body.chats.atlas.version > 0)
+
+  // Follow-ups carry the earlier conversation as context; history survives a restart.
+  await chat('atlas', { message: 'And after that?', workspace: f.workspace })
+  state = await settled('atlas')
+  assert.equal(state.messages.length, 4)
+  capture = JSON.parse(await readFile(f.capture, 'utf8'))
+  assert.match(capture.prompt, /CONVERSATION SO FAR:[\s\S]*What is the plan\?[\s\S]*fixture reply from claude[\s\S]*And after that\?/)
+  await f.stop(); await f.start()
+  assert.equal((await f.request('/api/agents/atlas/chat')).body.messages.length, 4)
+
+  // Without an agent default the office's provider answers; Codex runs in its read-only sandbox.
+  await chat('nova', { message: 'Hello', workspace: f.workspace, provider: 'codex' })
+  state = await settled('nova')
+  assert.equal(state.messages.at(-1).text, 'fixture reply from codex')
+  capture = JSON.parse(await readFile(f.capture, 'utf8'))
+  assert.deepEqual(capture.args.slice(capture.args.indexOf('-s'), capture.args.indexOf('-s') + 2), ['-s', 'read-only'])
+
+  assert.equal((await f.request('/api/agents/atlas/chat', 'DELETE')).status, 200)
+  assert.deepEqual((await f.request('/api/agents/atlas/chat')).body.messages, [])
+  assert.equal((await f.request('/api/agents/nova', 'DELETE')).status, 200)
+  assert.equal((await f.request('/api/state')).body.chats.nova, undefined, 'Removing an agent removes their conversation')
+})
+
+test('a chat reply can be stopped and failures are shown as agent messages', async t => {
+  const f = await fixture(t, 'hold')
+  await f.request('/api/agents/atlas/chat', 'POST', { message: 'Long question', workspace: f.workspace, provider: 'codex' })
+  await until(async () => (await f.request('/api/agents/atlas/chat')).body.pending)
+  assert.equal((await f.request('/api/agents/atlas/chat', 'POST', { message: 'Another', workspace: f.workspace })).status, 409)
+  assert.equal((await f.request('/api/agents/atlas/chat', 'DELETE')).status, 409)
+  assert.equal((await f.request('/api/agents/atlas/chat/stop', 'POST', {})).status, 200)
+  const stopped = await until(async () => { const { body } = await f.request('/api/agents/atlas/chat'); return !body.pending && body })
+  assert.equal(stopped.messages.at(-1).text, 'Reply stopped.'); assert.equal(stopped.messages.at(-1).error, true)
+  const failing = await fixture(t, 'failure')
+  await failing.request('/api/agents/nova/chat', 'POST', { message: 'Hi', workspace: failing.workspace, provider: 'claude' })
+  const failed = await until(async () => { const { body } = await failing.request('/api/agents/nova/chat'); return !body.pending && body.messages.length === 2 && body })
+  assert.equal(failed.messages[1].error, true); assert.match(failed.messages[1].text, /fixture failed/)
+})
+
 test('structured provider failures and nonzero stderr exits cannot become successful tasks', async t => {
   const f = await fixture(t, 'failure')
   for (const provider of ['codex', 'claude', 'antigravity']) {
@@ -322,7 +385,7 @@ test('unreadable or malformed private stores are preserved and never silently re
   for (const contents of ['[null]', '{broken', '{"not":"an array"}']) {
     const f = await fixture(t, 'success', { 'tasks.json': contents, 'agents.json': '{broken' })
     const state = (await f.request('/api/state')).body
-    assert.deepEqual(state.storage, { historyReadable: false, agentsReadable: false, schedulesReadable: true, knowledgeReadable: true, historyWriteError: false })
+    assert.deepEqual(state.storage, { historyReadable: false, agentsReadable: false, schedulesReadable: true, knowledgeReadable: true, chatsReadable: true, historyWriteError: false })
     assert.equal((await f.launch()).status, 503)
     const create = await f.request('/api/agents', 'POST', { name:'Safe',role:'QA',specialty:'Audit',department:'quality',color:'#123456' })
     assert.equal(create.status, 500)
@@ -341,6 +404,12 @@ test('unreadable or malformed private stores are preserved and never silently re
   assert.equal(schedule.status, 500, 'A corrupt schedule store must not be replaced')
   await schedulesOnly.stop()
   assert.equal(await readFile(join(schedulesOnly.data, 'schedules.json'), 'utf8'), '{broken')
+  const chatsOnly = await fixture(t, 'success', { 'chats.json': '{"atlas":"broken"}' })
+  assert.equal((await chatsOnly.request('/api/state')).body.storage.chatsReadable, false)
+  assert.equal((await chatsOnly.request('/api/agents/atlas/chat', 'POST', { message: 'Hi', workspace: chatsOnly.workspace })).status, 503, 'A corrupt conversation store must not be replaced')
+  assert.equal((await chatsOnly.launch()).status, 201, 'Tasks still run without conversations')
+  await chatsOnly.stop()
+  assert.equal(await readFile(join(chatsOnly.data, 'chats.json'), 'utf8'), '{"atlas":"broken"}')
   const knowledgeOnly = await fixture(t, 'success', { 'knowledge.json': '[{"id":1}]' })
   assert.equal((await knowledgeOnly.request('/api/state')).body.storage.knowledgeReadable, false)
   const note = await knowledgeOnly.request('/api/knowledge', 'POST', { workspace: knowledgeOnly.workspace, title: 'Keep', body: 'A note.' })

@@ -105,7 +105,7 @@ function FollowSelected({ selected, overview, avatars, center }: { selected: str
   return null
 }
 
-function Desk({ color, screen, workingRef, theme }: { color: string; screen: string; workingRef: RefObject<boolean>; theme: OfficePreferences['theme'] }) {
+function Desk({ color, screen, workingRef, theme }: { color: string; /** The agent's own colour: screen glow and mug. */ screen: string; workingRef: RefObject<boolean>; theme: OfficePreferences['theme'] }) {
   const monitor = useRef<Mesh>(null)
   useFrame(state => {
     // The screen lights up for a task only once its agent is seated at it.
@@ -165,7 +165,7 @@ function Desk({ color, screen, workingRef, theme }: { color: string; screen: str
     </mesh>))}
     <mesh position={[.59, 1.063, .16]}><cylinderGeometry args={[.1, .1, .04, 12]} /><meshStandardMaterial color="#242d3a" /></mesh>
     <mesh position={[-.85, 1.038, -.4]}><cylinderGeometry args={[.15, .15, .016, 16]}/><meshStandardMaterial color="#b5bdc8" roughness={.8}/></mesh>
-    <mesh position={[-.85, 1.12, -.4]}><cylinderGeometry args={[.12, .10, .14, 12]}/><meshStandardMaterial color={color}/></mesh>
+    <mesh position={[-.85, 1.12, -.4]}><cylinderGeometry args={[.12, .10, .14, 12]}/><meshStandardMaterial color={screen}/></mesh>
     <RoundedBox position={[.85, 1.052, -.31]} args={[.43, .035, .26]} radius={.018} castShadow>
       <meshStandardMaterial color="#f5f0df" roughness={.9}/>
     </RoundedBox>
@@ -223,7 +223,7 @@ function Workstation({ seat, simulation, selected, pose, onSelect, preferences, 
     traveler.current.userData.idleStatus = idleStatus(frame, visit)
   }, -.75)
   return <group position={position}>
-    {/* Leads get gold desk trim; the screen always glows in the agent's own colour. */}
+    {/* Leads get gold desk trim; the screen and mug always use the agent's own colour. */}
     <Desk color={seat.placement === 'lead' ? '#ba9759' : agent.color} screen={agent.color} workingRef={atDeskRef} theme={preferences.theme} />
     <group ref={node => { traveler.current = node; if (node) avatars.current.set(agent.id, node); else avatars.current.delete(agent.id) }} position={[0, 0, STAND_Z]} rotation={[0, Math.PI, 0]}>
       <OfficeAvatar agent={agent} pose={pose} selected={selected} onSelect={onSelect} walkRef={walkRef} gaitRef={gaitRef} seatedRef={seatedRef} coffeeRef={coffeeRef} idleRef={idleRef} atDeskRef={atDeskRef} lieRef={lieRef} animate={preferences.motion !== 'off'}/>

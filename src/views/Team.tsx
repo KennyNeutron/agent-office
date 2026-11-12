@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { ArrowRight, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { ArrowRight, MessageCircle, Pencil, Plus, Trash2, X } from 'lucide-react';
 import type { AgentId, Department, OfficeAgent, OfficeTask, PermissionMode, ProviderId, ProviderInfo } from '../types';
 import { DEPARTMENTS, displayAgentText, suggestDepartment, useAgents } from '../agents';
 import { useLanguage } from '../locales/i18n';
@@ -12,10 +12,11 @@ const blank: AgentInput = { name: '', role: '', specialty: '', department: 'gene
 const PROVIDER_NAMES: Record<ProviderId, string> = { codex: 'Codex CLI', claude: 'Claude Code', antigravity: 'Antigravity CLI' };
 const PERMISSION_NAMES: Record<PermissionMode, string> = { restricted: 'Restricted', 'approve-for-me': 'Approve for me', 'full-access': 'Full Access' };
 
-export function Team({ tasks, providers, onTask, onSave, onDelete, connected, demo }: {
+export function Team({ tasks, providers, onTask, onChat, onSave, onDelete, connected, demo }: {
   tasks: OfficeTask[];
   providers: ProviderInfo[];
   onTask: (id: AgentId) => void;
+  onChat: (id: AgentId) => void;
   onSave: (agent: AgentInput, id?: string) => Promise<boolean>;
   onDelete: (id: string) => Promise<boolean>;
   connected: boolean;
@@ -82,6 +83,7 @@ export function Team({ tasks, providers, onTask, onSave, onDelete, connected, de
         <div className="agent-card-foot"><span>{tasks.filter(t => t.agentId === a.id).length} {tr('total tasks')}</span><div className="roster-actions">
           <button title={tr('Edit agent')} aria-label={`${tr('Edit agent')} ${a.name}`} onClick={() => open(a)} disabled={!connected || busy}><Pencil size={15}/></button>
           <button title={tr('Remove agent')} aria-label={`${tr('Remove agent')} ${a.name}`} onClick={() => remove(a)} disabled={!connected || working || busy}><Trash2 size={15}/></button>
+          <button title={tr('Chat')} aria-label={`${tr('Chat with')} ${a.name}`} onClick={() => onChat(a.id)}><MessageCircle size={15}/></button>
           <button onClick={() => onTask(a.id)}>{tr('Assign task')} <ArrowRight size={15}/></button>
         </div></div></article>;
     })}</div>

@@ -12,6 +12,7 @@ import { MAX_SCHEDULES, isDue, makeSchedule, migrateSchedules, recordRun, staleO
 import { jsonLines, parseMessage, shrink, taskFiles, taskReplies } from './task-output.mjs'
 import { capNotes, extractKnowledgeNote, makeNote, relevantNotes, searchNotes, validateNoteInput, validStoredNotes } from './knowledge.mjs'
 import { terminateProcess } from './processes.mjs'
+import { MAX_CHAT_REPLY, appendChat, chatCommand, composeChatPrompt, validStoredChats, validateChatMessage } from './chat.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')
@@ -22,6 +23,9 @@ const AGENT_STORE = join(dirname(STORE), 'agents.json')
 const SCHEDULE_STORE = join(dirname(STORE), 'schedules.json')
 const KNOWLEDGE_STORE = join(dirname(STORE), 'knowledge.json')
 const KNOWLEDGE_MCP = join(HERE, 'knowledge-mcp.mjs')
+const CHAT_STORE = join(dirname(STORE), 'chats.json')
+// A chat reply that takes longer than this is stopped.
+const CHAT_TIMEOUT_MS = Math.max(1000, Number(process.env.AGENT_OFFICE_CHAT_TIMEOUT_MS) || 10 * 60_000)
 // How often due schedules are checked. Tests shorten it.
 const SCHEDULER_MS = Math.max(200, Number(process.env.AGENT_OFFICE_SCHEDULER_MS) || 10_000)
 const PORT = Number(process.env.PORT || 4300)
@@ -40,6 +44,13 @@ let knowledgePersistChain = Promise.resolve()
 let knowledgeReadable = true
 // Bumped on every knowledge change so open browsers know to refetch.
 let knowledgeVersion = 0
+// Conversations by agent id, plus the reply currently being generated for each agent.
+let chats = {}
+let chatsPersistChain = Promise.resolve()
+let chatsReadable = true
+const chatRuns = new Map()
+// Bumped whenever an agent's conversation changes so open chat windows refetch it.
+const chatVersions = new Map()
 const active = new Map()
 const clients = new Set()
 let tasks = []
@@ -94,7 +105,9 @@ function snapshot() {
     tasks: tasks.map(visible),
     schedules,
     knowledgeVersion,
-    storage: { historyReadable, agentsReadable, schedulesReadable, knowledgeReadable, historyWriteError },
+    chats: Object.fromEntries([...new Set([...Object.keys(chats), ...chatRuns.keys()])].map(id =>
+      [id, { version: chatVersions.get(id) ?? 0, pending: chatRuns.has(id), count: chats[id]?.length ?? 0 }])),
+    storage: { historyReadable, agentsReadable, schedulesReadable, knowledgeReadable, chatsReadable, historyWriteError },
   }
 }
 
@@ -288,12 +301,133 @@ app.delete('/api/agents/:id', async (req, res) => {
       return { next: current.filter(agent => agent.id !== req.params.id) }
     })
     if (result.error) return res.status(result.status).json({ error: result.error })
+    if (chatsReadable && chats[req.params.id]) await changeChats(current => {
+      const { [req.params.id]: _removed, ...rest } = current
+      return { next: rest }
+    }, req.params.id).catch(() => {})
     // Schedules cannot run without their agent; remove them with the profile.
     if (schedulesReadable && schedules.some(item => item.agentId === req.params.id)) {
       await changeSchedules(current => ({ next: current.filter(item => item.agentId !== req.params.id) })).catch(() => {})
     }
     res.json({ ok: true })
   } catch { res.status(500).json({ error: 'Could not save agent profile.' }) }
+})
+
+// ---- Agent chat -------------------------------------------------------------
+// Same contract as the roster: serialized, atomic, acknowledged after the write.
+function changeChats(edit, agentId) {
+  const operation = chatsPersistChain.then(async () => {
+    if (!chatsReadable) throw new Error('Existing conversations are unreadable; refusing to overwrite them.')
+    const update = edit(chats)
+    if (update.error) return update
+    await atomicWrite(CHAT_STORE, JSON.stringify(update.next, null, 2))
+    chats = update.next
+    chatVersions.set(agentId, (chatVersions.get(agentId) ?? 0) + 1)
+    notifyState()
+    return update
+  })
+  chatsPersistChain = operation.then(() => {}, error => console.error('Could not save conversations:', error.message))
+  return operation
+}
+async function loadChats() {
+  try {
+    const stored = JSON.parse(await readFile(CHAT_STORE, 'utf8'))
+    if (validStoredChats(stored)) chats = stored
+    else throw new Error('Invalid chats.json; conversations are unavailable until the file is repaired.')
+  } catch (error) {
+    if (error.code !== 'ENOENT') { chatsReadable = false; console.error('Could not load conversations:', error.message) }
+  }
+}
+const chatMessage = (role, text, extra = {}) => ({ id: randomUUID(), role, text, at: stamp(), ...extra })
+
+app.get('/api/agents/:id/chat', (req, res) => {
+  if (!agents.some(agent => agent.id === req.params.id)) return res.status(404).json({ error: 'Agent not found.' })
+  res.json({ messages: chats[req.params.id] ?? [], pending: chatRuns.has(req.params.id), readable: chatsReadable })
+})
+
+// Replies use the agent's default provider (else the office's choice) and always run read-only.
+app.post('/api/agents/:id/chat', async (req, res) => {
+  if (!chatsReadable) return res.status(503).json({ error: 'Conversations are unreadable. Preserve and repair chats.json before chatting.' })
+  await agentsPersistChain
+  const agent = agents.find(item => item.id === req.params.id)
+  if (!agent) return res.status(404).json({ error: 'Agent not found.' })
+  const { message, workspace: requestedWorkspace, provider: fallbackProvider } = req.body || {}
+  const invalid = validateChatMessage(message)
+  if (invalid) return res.status(400).json({ error: invalid })
+  if (chatRuns.has(agent.id)) return res.status(409).json({ error: `${agent.name} is still answering your last message.` })
+  const provider = providers.find(item => item.id === (agent.provider || fallbackProvider || 'codex'))
+  if (!provider) return res.status(400).json({ error: 'Unknown AI provider.' })
+  if (!provider.available) return res.status(503).json({ error: `${provider.name} was not found. Install and authenticate the CLI, then restart Agent Office.` })
+  const workspace = typeof requestedWorkspace === 'string' && requestedWorkspace ? requestedWorkspace : process.env.AGENT_OFFICE_WORKSPACE || ROOT
+  if (workspace.length > 1000 || workspace.includes('\0') || !isAbsolute(workspace)) return res.status(400).json({ error: 'Enter an absolute project directory path.' })
+  let canonical
+  try {
+    if (!statSync(workspace).isDirectory()) return res.status(400).json({ error: 'The project directory is invalid.' })
+    canonical = realpathSync(workspace)
+  } catch { return res.status(400).json({ error: 'Project directory was not found.' }) }
+
+  // Reserve the agent's chat before awaiting storage so two messages cannot race.
+  const run = { child: null, stopping: null, stopped: false }
+  run.done = new Promise(resolve => { run.resolveDone = resolve })
+  chatRuns.set(agent.id, run)
+  const history = chats[agent.id] ?? []
+  const userMessage = chatMessage('user', message.trim())
+  try { await changeChats(current => ({ next: { ...current, [agent.id]: appendChat(current[agent.id], userMessage) } }), agent.id) }
+  catch { chatRuns.delete(agent.id); run.resolveDone(); notifyState(); return res.status(500).json({ error: 'Could not save the conversation.' }) }
+
+  const finish = async (text, error = false) => {
+    if (run.finished) return
+    run.finished = true
+    clearTimeout(run.timer)
+    const reply = chatMessage('agent', String(text).slice(0, MAX_CHAT_REPLY), { provider: provider.id, ...(error ? { error: true } : {}) })
+    await changeChats(current => ({ next: { ...current, [agent.id]: appendChat(current[agent.id], reply) } }), agent.id).catch(() => {})
+    chatRuns.delete(agent.id)
+    notifyState()
+    run.resolveDone()
+  }
+  const { command, args, input } = chatCommand(provider, canonical, composeChatPrompt(agent, history, userMessage.text))
+  let child
+  try { child = spawn(command, args, { cwd: canonical, shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }) }
+  catch (error) { await finish(`Could not start ${provider.name}: ${shrink(error.message, 300)}`, true); return res.status(201).json({ message: userMessage, provider: provider.id }) }
+  run.child = child
+  // The output parser is shared with tasks; a scratch record collects the reply and any failure.
+  const scratch = { provider: provider.id, events: [], lastMessage: '', phase: 'thinking' }
+  const errors = []
+  const reader = jsonLines(data => parseMessage(scratch, data, (_task, text, kind) => { if (kind === 'error') errors.push(text) }), () => errors.push('Provider output exceeded the supported record size.'))
+  let stderr = ''
+  child.stdout.setEncoding('utf8'); child.stdout.on('data', chunk => reader.push(chunk))
+  child.stderr.setEncoding('utf8'); child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-1200) })
+  child.on('error', error => errors.push(shrink(error.message, 400)))
+  child.on('close', code => {
+    reader.end()
+    const text = taskReplies.get(scratch)
+    if (run.stopped) void finish(run.stopped === 'timeout' ? `No reply within ${Math.round(CHAT_TIMEOUT_MS / 60_000) || 1} minutes, so the request was stopped.` : 'Reply stopped.', true)
+    else if (code === 0 && !scratch.failure && text?.trim()) void finish(text.trim())
+    else void finish(scratch.failure || errors.at(-1) || shrink(stderr, 500) || `${provider.name} exited with code ${code} without replying.`, true)
+  })
+  child.stdin.on('error', () => {})
+  child.stdin.end(input)
+  run.timer = setTimeout(() => { run.stopped = 'timeout'; run.stopping ||= terminateProcess(child).catch(() => {}) }, CHAT_TIMEOUT_MS)
+  res.status(201).json({ message: userMessage, provider: provider.id })
+})
+
+app.post('/api/agents/:id/chat/stop', async (req, res) => {
+  const run = chatRuns.get(req.params.id)
+  if (!run?.child) return res.status(404).json({ error: 'No reply is in progress.' })
+  run.stopped ||= 'user'
+  try { run.stopping ||= terminateProcess(run.child); await run.stopping; res.json({ ok: true }) }
+  catch { run.stopping = null; res.status(500).json({ error: 'Could not stop the reply.' }) }
+})
+
+app.delete('/api/agents/:id/chat', async (req, res) => {
+  if (chatRuns.has(req.params.id)) return res.status(409).json({ error: 'Wait for the reply to finish, or stop it, before clearing the conversation.' })
+  try {
+    await changeChats(current => {
+      const { [req.params.id]: _removed, ...rest } = current
+      return { next: rest }
+    }, req.params.id)
+    res.json({ ok: true })
+  } catch { res.status(500).json({ error: 'Could not clear the conversation.' }) }
 })
 
 // ---- Team knowledge -------------------------------------------------------
@@ -643,7 +777,7 @@ app.post('/api/tasks/:id/cancel', async (req, res) => {
   }
 })
 
-await Promise.all([loadHistory(), loadAgents(), loadSchedules(), loadKnowledge()])
+await Promise.all([loadHistory(), loadAgents(), loadSchedules(), loadKnowledge(), loadChats()])
 if (existsSync(join(ROOT, 'dist', 'index.html'))) {
   app.use(express.static(join(ROOT, 'dist')))
   app.get('/', (_req, res) => res.sendFile(join(ROOT, 'dist', 'index.html')))
@@ -685,7 +819,13 @@ export function shutdown() {
       await running.done
     }))
     for (const result of results) if (result.status === 'rejected') { console.error(result.reason.message); process.exitCode = 1 }
+    await Promise.allSettled([...chatRuns.values()].map(async run => {
+      run.stopped ||= 'user'
+      if (run.child) await (run.stopping ||= terminateProcess(run.child))
+      await run.done
+    }))
     await agentsPersistChain
+    await chatsPersistChain
     await schedulesPersistChain
     await knowledgePersistChain
     if (historyReadable) await persistHistory().catch(() => { process.exitCode = 1 })
