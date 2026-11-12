@@ -90,7 +90,16 @@ test('task dispatch passes the agent profile and preserves the human request for
         : provider === 'claude'
           ? ['--print', '--verbose', '--output-format', 'stream-json', '--permission-mode', 'acceptEdits', '--permission-prompts', 'none']
           : [`--print=${capture.prompt}`, '--output-format', 'stream-json', '--disable-slash-commands', '--mode', 'accept-edits']
-      assert.deepEqual(capture.args, expected, `${provider} must receive the exact argv, without shell interpretation`)
+      // Claude Code and Codex also receive the team knowledge MCP server for this run.
+      const mcpFlags = new Set(['--mcp-config', '--allowedTools', '-c'])
+      const mcp = [], argv = []
+      for (let i = 0; i < capture.args.length; i++) {
+        if (mcpFlags.has(capture.args[i]) && (capture.args[i] !== '-c' || capture.args[i + 1]?.startsWith('mcp_servers.agent_office.'))) { mcp.push(capture.args[i], capture.args[++i]); continue }
+        argv.push(capture.args[i])
+      }
+      assert.deepEqual(argv, expected, `${provider} must receive the exact argv, without shell interpretation`)
+      if (provider === 'antigravity') assert.deepEqual(mcp, [], 'Antigravity CLI has no per-run MCP configuration')
+      else assert.ok(mcp.join(' ').includes('knowledge-mcp.mjs') && mcp.join(' ').includes(task.id), `${provider} must receive the knowledge MCP server for this task`)
       for (const field of ['Review Specialist', 'Visual QA', 'Animation posture', 'quality', humanPrompt]) {
         assert.ok(capture.prompt.includes(field), `${provider} did not receive ${field}`)
       }
@@ -267,7 +276,7 @@ test('unreadable or malformed private stores are preserved and never silently re
   for (const contents of ['[null]', '{broken', '{"not":"an array"}']) {
     const f = await fixture(t, 'success', { 'tasks.json': contents, 'agents.json': '{broken' })
     const state = (await f.request('/api/state')).body
-    assert.deepEqual(state.storage, { historyReadable: false, agentsReadable: false, schedulesReadable: true, historyWriteError: false })
+    assert.deepEqual(state.storage, { historyReadable: false, agentsReadable: false, schedulesReadable: true, knowledgeReadable: true, historyWriteError: false })
     assert.equal((await f.launch()).status, 503)
     const create = await f.request('/api/agents', 'POST', { name:'Safe',role:'QA',specialty:'Audit',department:'quality',color:'#123456' })
     assert.equal(create.status, 500)
@@ -286,6 +295,13 @@ test('unreadable or malformed private stores are preserved and never silently re
   assert.equal(schedule.status, 500, 'A corrupt schedule store must not be replaced')
   await schedulesOnly.stop()
   assert.equal(await readFile(join(schedulesOnly.data, 'schedules.json'), 'utf8'), '{broken')
+  const knowledgeOnly = await fixture(t, 'success', { 'knowledge.json': '[{"id":1}]' })
+  assert.equal((await knowledgeOnly.request('/api/state')).body.storage.knowledgeReadable, false)
+  const note = await knowledgeOnly.request('/api/knowledge', 'POST', { workspace: knowledgeOnly.workspace, title: 'Keep', body: 'A note.' })
+  assert.equal(note.status, 503, 'A corrupt knowledge store must not be replaced')
+  assert.equal((await knowledgeOnly.launch()).status, 201, 'Tasks still run without team knowledge')
+  await knowledgeOnly.stop()
+  assert.equal(await readFile(join(knowledgeOnly.data, 'knowledge.json'), 'utf8'), '[{"id":1}]')
 })
 
 test('failed durable storage prevents a provider launch; async spawn errors release reservations', async t => {

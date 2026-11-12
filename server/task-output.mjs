@@ -2,9 +2,20 @@ export const shrink = (value, max = 190) => String(value ?? '').replace(/[\r\n\t
 const object = value => value && typeof value === 'object' && !Array.isArray(value)
 const text = value => typeof value === 'string' ? value : ''
 
+// Not persisted: the full latest reply (lastMessage is a short preview) and the
+// files a run edited, used to draft a knowledge note when the task completes.
+export const taskReplies = new WeakMap()
+export const taskFiles = new WeakMap()
+const touched = (task, path) => {
+  if (!text(path)) return
+  const files = taskFiles.get(task) ?? new Set()
+  if (files.size < 40) files.add(path)
+  taskFiles.set(task, files)
+}
+
 export function parseMessage(task, data, addEvent) {
   if (!object(data)) return
-  const message = value => { if (text(value)) task.lastMessage = shrink(value, 500) }
+  const message = value => { if (text(value)) { task.lastMessage = shrink(value, 500); taskReplies.set(task, value.slice(0, 20_000)) } }
   const failure = value => { task.failure = shrink(value, 500); addEvent(task, task.failure, 'error') }
   if (task.provider === 'claude') {
     if (data.type === 'system' && text(data.session_id)) task.threadId = data.session_id
@@ -14,6 +25,7 @@ export function parseMessage(task, data, addEvent) {
         if (block.type === 'tool_use' && text(block.name)) {
           task.phase = /WebSearch|WebFetch/i.test(block.name) ? 'researching' : 'coding'
           addEvent(task, `Claude used ${shrink(block.name)}.`)
+          if (/^(Edit|MultiEdit|Write|NotebookEdit)$/.test(block.name) && object(block.input)) touched(task, block.input.file_path || block.input.notebook_path)
         } else if (block.type === 'text' && text(block.text)) {
           message(block.text); addEvent(task, 'Claude replied: ' + shrink(block.text, 140))
         }
@@ -45,6 +57,7 @@ export function parseMessage(task, data, addEvent) {
     } else if (item.type === 'file_change') {
       task.phase = 'coding'
       if (data.type !== 'item.updated') addEvent(task, `${verb} file changes.`)
+      for (const change of Array.isArray(item.changes) ? item.changes : []) if (object(change)) touched(task, change.path)
     } else if (item.type === 'agent_message' && data.type === 'item.completed') {
       message(item.text); addEvent(task, 'Agent replied: ' + shrink(item.text, 140))
     } else if (item.type === 'mcp_tool_call' && data.type !== 'item.updated') {
@@ -95,8 +108,11 @@ function parseAntigravity(task, data, addEvent, message, failure) {
     message(payload.response)
     if (object(payload.usage)) task.usage = payload.usage
     const denied = Array.isArray(payload.denied_actions) ? [...new Set(payload.denied_actions.map(item => text(item?.display_name) || text(item?.action)).filter(Boolean))] : []
-    if (denied.length) addEvent(task, shrink(`Antigravity CLI skipped actions that required approval (${denied.join(', ')}). Check the agent reply for work that could not run.`, 350), 'error')
-    if (payload.status !== 'SUCCESS') failure(text(payload.error?.message) || text(payload.error) || `Antigravity CLI finished with status ${shrink(text(payload.status) || 'unknown', 40)}.`)
+    // In print mode agy ends the whole turn at the first soft-denied action, still reporting
+    // SUCCESS with an empty response. That run did nothing, so it must not read as completed.
+    if (denied.length && !text(payload.response).trim()) failure(shrink(`Antigravity CLI stopped because it needed approval for ${denied.join(', ')}, which Restricted runs cannot grant. Run the task with Full Access to let it run commands.`, 350))
+    else if (denied.length) addEvent(task, shrink(`Antigravity CLI skipped actions that required approval (${denied.join(', ')}). Check the agent reply for work that could not run.`, 350), 'error')
+    if (payload.status !== 'SUCCESS' && !task.failure) failure(text(payload.error?.message) || text(payload.error) || `Antigravity CLI finished with status ${shrink(text(payload.status) || 'unknown', 40)}.`)
     task.phase = 'finishing'; task.outputComplete = true
   }
 }

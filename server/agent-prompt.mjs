@@ -1,7 +1,11 @@
 // Build the instructions for a real CLI run from the persisted agent profile.
 // The original task remains unchanged in history, while each configured agent
 // receives a role-specific execution context.
-export function composeAgentPrompt(agent, humanPrompt) {
+import { AGENT_GUIDANCE, knowledgeContext, MCP_GUIDANCE } from './knowledge.mjs'
+
+/** `knowledge`: relevant team notes for this task, and whether the knowledge MCP tools are attached. */
+export function composeAgentPrompt(agent, humanPrompt, knowledge = { notes: [], mcp: false }) {
+  const context = knowledgeContext(knowledge.notes ?? [])
   return [
     `You are ${agent.name}, an AI coding assistant working inside Agent Office.`,
     `Your assigned role is ${agent.role}.`,
@@ -11,6 +15,9 @@ export function composeAgentPrompt(agent, humanPrompt) {
     'For every task, check whether Graphify is available in your CLI session. When it is available, consult the graph for the target repository before investigating or changing code. Verify relevant findings against the current checkout because the index can lag behind it. If Graphify is unavailable or the repository is unindexed, continue using the local checkout and mention the limitation in your report.',
     'When the user asks for an implementation, make the requested changes in the assigned workspace. Before claiming implementation, inspect the resulting files, including any newly created files, and run the relevant checks available to you. In your final reply, list what you changed and verified, and say explicitly if no files changed, the request is only partly implemented, or anything still blocks it from working.',
     'If a tool requires approval in this noninteractive session, report which action was blocked. Use approved editing tools for changes within the assigned workspace, and report any required files outside that workspace so the user can choose the appropriate project directory.',
+    AGENT_GUIDANCE,
+    ...(knowledge.mcp ? [MCP_GUIDANCE] : []),
+    ...(context ? ['', context] : []),
     '',
     'USER TASK:',
     humanPrompt,

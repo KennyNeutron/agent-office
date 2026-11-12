@@ -11,7 +11,7 @@ import { boardSpots, chessSeats, COFFEE_TABLE, dartsSpots, GAMES, gamesRoom, NAP
 import { createOfficePets, GREET_OFFSET, pathToAgent, pathToNap, petVisits, stepOfficePets } from '../src/scene/petSimulation.ts'
 import { isSleeping } from '../src/scene/officeSimulation.ts'
 import { PET_FACING } from '../src/scene/officeMotion.ts'
-import { activeReaders, HOLOGRAM_RADIUS, isKnowledgeEvent, KNOWLEDGE_RADIUS, KNOWLEDGE_RECENT_MS, knowledgeGeometry, knowledgeGraphPosition, knowledgeReaders } from '../src/scene/knowledgeGraphLayout.ts'
+import { activeReaders, HOLOGRAM_RADIUS, isKnowledgeEvent, KNOWLEDGE_RADIUS, KNOWLEDGE_RECENT_MS, knowledgeGeometry, knowledgeGraphPosition, knowledgeQueries, knowledgeReaders, knowledgeTool } from '../src/scene/knowledgeGraphLayout.ts'
 import { RECEPTION_PROPS } from '../src/scene/timepieceLayout.ts'
 import { idleStatus, presentedPose, WORK_POSES } from '../src/scene/agentBehavior.ts'
 
@@ -874,4 +874,24 @@ test('every idle agent always has a status describing what it is doing', () => {
   for (const status of ['Browsing at desk', 'Watching TV', 'Playing darts', 'Heading to desk']) assert.ok(seen.has(status), `expected "${status}" to appear`)
   assert.equal(idleStatus({ stage: 'lounging', activity: 'chess', alone: 3 }, 'chess'), 'Waiting for an opponent')
   assert.equal(idleStatus({ stage: 'idling', activity: 'phone', alone: 0 }, null), 'On the phone')
+})
+
+test('the knowledge popup lists each graphify call once, newest first, for all providers', () => {
+  assert.equal(knowledgeTool('Claude used mcp__graphify__query_graph.'), 'query_graph')
+  assert.equal(knowledgeTool('Antigravity used graph_stats.'), 'graph_stats')
+  assert.equal(knowledgeTool('Starting graphify tool: graphify_find'), 'graphify_find')
+  assert.equal(knowledgeTool('Finished graphify tool: graphify_find'), null, 'Codex start/finish pairs count once')
+  assert.equal(knowledgeTool('Claude used Read.'), null)
+  assert.equal(knowledgeTool('Agent replied: I used graphify tool: query_graph.'), null)
+  const at = seconds => new Date(Date.parse('2026-11-10T12:00:00Z') + seconds * 1000).toISOString()
+  const tasks = [
+    { id: 'a', agentId: 'atlas', prompt: 'Plan', status: 'completed', events: [
+      { id: '1', at: at(1), kind: 'info', message: 'Claude used mcp__graphify__search.' },
+      { id: '2', at: at(5), kind: 'info', message: 'Claude used Edit.' }] },
+    { id: 'n', agentId: 'nova', prompt: 'Build', status: 'running', events: [
+      { id: '3', at: at(3), kind: 'info', message: 'Starting graphify tool: query_graph' },
+      { id: '4', at: at(4), kind: 'info', message: 'Finished graphify tool: query_graph' }] },
+  ]
+  const queries = knowledgeQueries(tasks)
+  assert.deepEqual(queries.map(query => [query.agentId, query.tool, query.taskId, query.status]), [['nova', 'query_graph', 'n', 'running'], ['atlas', 'search', 'a', 'completed']])
 })

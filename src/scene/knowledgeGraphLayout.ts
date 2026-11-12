@@ -34,6 +34,28 @@ export function isKnowledgeEvent(message: string): boolean {
   return Boolean(tool && KNOWLEDGE_TOOL.test(tool[1] || tool[2]))
 }
 
+/**
+ * The graphify tool a knowledge event names, e.g. "query_graph" (MCP prefixes
+ * stripped), or null. Codex reports each call twice (Starting/Finished); only
+ * the start counts, so every call is listed once.
+ */
+export function knowledgeTool(message: string): string | null {
+  if (!isKnowledgeEvent(message) || message.startsWith('Finished ')) return null
+  const name = /^\w+ used (\S+)\.$/.exec(message)?.[1] ?? /tool: (\S+)$/.exec(message)?.[1] ?? ''
+  return name.replace(/^mcp__graphify__/, '') || 'graphify'
+}
+
+export type KnowledgeQuery = { taskId: string; agentId: string; tool: string; at: number; prompt: string; status: OfficeTask['status'] }
+/** Every graphify call recorded in the tasks' events, newest first. */
+export function knowledgeQueries(tasks: OfficeTask[]): KnowledgeQuery[] {
+  const queries: KnowledgeQuery[] = []
+  for (const task of tasks) for (const event of task.events) {
+    const tool = knowledgeTool(event.message), at = Date.parse(event.at)
+    if (tool && Number.isFinite(at)) queries.push({ taskId: task.id, agentId: task.agentId, tool, at, prompt: task.prompt, status: task.status })
+  }
+  return queries.sort((a, b) => b.at - a.at)
+}
+
 export type KnowledgeReader = { agentId: string; at: number }
 /** Running tasks whose agent queried the knowledge graph, newest query first. */
 export function knowledgeReaders(tasks: OfficeTask[]): KnowledgeReader[] {

@@ -12,7 +12,8 @@ const IDLE = new Color('#3f86d4')
  * A holographic knowledge graph on a pedestal beside reception. Dim and slow while
  * nobody is querying it; nodes light up in the colours of agents reading it.
  */
-export function KnowledgeGraph({ layout, readers, agents, accent, animate }: {
+export function KnowledgeGraph({ layout, readers, agents, accent, animate, onOpen }: {
+  onOpen: () => void
   layout: OfficeLayout; readers: KnowledgeReader[]; agents: OfficeAgent[]; accent: string; animate: boolean
 }) {
   const [x, , z] = knowledgeGraphPosition(layout)
@@ -62,7 +63,10 @@ export function KnowledgeGraph({ layout, readers, agents, accent, animate }: {
     }
     if (beam.current) (beam.current.material as MeshStandardMaterial).opacity = .06 + g * (.16 + (animate ? Math.sin(t * 4) * .05 : 0))
   })
-  return <group position={[x, 0, z]} name="knowledge-graph">
+  return <group position={[x, 0, z]} name="knowledge-graph"
+    onClick={event => { event.stopPropagation(); onOpen() }}
+    onPointerOver={event => { event.stopPropagation(); document.body.style.cursor = 'pointer' }}
+    onPointerOut={() => { document.body.style.cursor = 'auto' }}>
     {/* Pedestal: weighted base, slim column and an emitter ring under the hologram. */}
     <mesh position={[0, .04, 0]} castShadow receiveShadow><cylinderGeometry args={[KNOWLEDGE_RADIUS, KNOWLEDGE_RADIUS + .02, .08, 28]}/><meshStandardMaterial color="#344257" metalness={.45} roughness={.45}/></mesh>
     <mesh position={[0, .55, 0]} castShadow><cylinderGeometry args={[.11, .15, .95, 18]}/><meshStandardMaterial color="#4b5d76" metalness={.5} roughness={.4}/></mesh>

@@ -87,8 +87,28 @@ export function foldersOverlap(left, right, platform = process.platform) {
   return inside(a, b) || inside(b, a)
 }
 
-export function providerCommand(provider, workspace, prompt, permissionMode) {
+export const KNOWLEDGE_TOOLS = ['search_knowledge', 'read_note', 'add_note']
+/** Whether Agent Office can hand this CLI its knowledge MCP server for a single run. */
+export const supportsKnowledgeMcp = id => id === 'claude' || id === 'codex'
+
+/**
+ * Per-run MCP wiring for the team knowledge server (`mcp` = { command, args }).
+ * Claude Code and Codex accept MCP servers on the command line, merged with the
+ * user's own configuration; Antigravity CLI only reads a global config file.
+ */
+function knowledgeMcpArgs(id, mcp) {
+  if (!mcp || !supportsKnowledgeMcp(id)) return []
+  if (id === 'claude') return ['--mcp-config', JSON.stringify({ mcpServers: { 'agent-office': { type: 'stdio', command: mcp.command, args: mcp.args } } }),
+    '--allowedTools', KNOWLEDGE_TOOLS.map(tool => `mcp__agent-office__${tool}`).join(',')]
+  // TOML accepts JSON string and string-array literals.
+  return ['-c', `mcp_servers.agent_office.command=${JSON.stringify(mcp.command)}`, '-c', `mcp_servers.agent_office.args=${JSON.stringify(mcp.args)}`]
+}
+
+export function providerCommand(provider, workspace, prompt, permissionMode, mcp = null) {
   const args = launchArgs(provider.id, workspace, permissionMode)
+  const extra = knowledgeMcpArgs(provider.id, mcp)
+  // Codex options follow the "exec" subcommand; Claude's go before its trailing flags.
+  if (extra.length) args.splice(provider.id === 'codex' ? 1 : args.indexOf('--permission-prompts'), 0, ...extra)
   // agy takes the prompt as a flag value; the "=" form keeps a prompt starting with "-" from parsing as a flag.
   if (provider.id === 'antigravity') args.unshift(`--print=${prompt}`)
   const script = /\.[cm]?js$/i.test(provider.bin)

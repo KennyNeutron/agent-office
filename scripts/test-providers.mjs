@@ -116,14 +116,18 @@ test('provider parsers accept malformed shapes, expose terminal errors and retai
   assert.equal(agy.threadId, 'c1'); assert.equal(agy.lastMessage, 'Hello world '); assert.equal(agy.failure, undefined)
   assert.equal(agy.outputComplete, true); assert.deepEqual(agy.usage, { input_tokens: 2, output_tokens: 2, total_tokens: 4 })
   assert.deepEqual(agy.events, [['info', 'Antigravity used read_file.'], ['info', 'Antigravity replied: Hello world']])
-  // Soft-denied approvals exit 0 with SUCCESS, so they must still surface as an error event.
+  // A soft-denied approval ends agy's turn with SUCCESS and no reply: that run did nothing, so it fails.
   const denied = { provider: 'antigravity', lastMessage: '', events: [] }
   parseMessage(denied, step(2, 'ACTIVE', { step_type: 'tool', tool_name: 'run_command' }), log)
   parseMessage(denied, step(2, 'ERROR', { step_type: 'tool', tool_name: 'run_command', tool_info: { error: { type: 'TOOL_ERROR', message: 'permission check failed' } } }), log)
   parseMessage(denied, { event: 'result', result: { status: 'SUCCESS', response: '', denied_actions: [{ action: 'command', display_name: 'RunCommand' }] } }, log)
-  assert.equal(denied.failure, undefined)
+  assert.match(denied.failure, /needed approval for RunCommand.*Full Access/)
   assert.deepEqual(denied.events.map(([kind]) => kind), ['info', 'error', 'error'])
-  assert.match(denied.events[2][1], /skipped actions that required approval \(RunCommand\)/)
+  // When agy still replied, the denial is only a warning.
+  const partial = { provider: 'antigravity', lastMessage: '', events: [] }
+  parseMessage(partial, { event: 'result', result: { status: 'SUCCESS', response: 'Edited the file; could not run tests.', denied_actions: [{ action: 'command', display_name: 'RunCommand' }] } }, log)
+  assert.equal(partial.failure, undefined)
+  assert.match(partial.events[0][1], /skipped actions that required approval \(RunCommand\)/)
   const failed = { provider: 'antigravity', lastMessage: '' }
   parseMessage(failed, { event: 'result', result: { status: 'ERROR', error: 'quota exceeded' } }, add)
   assert.equal(failed.failure, 'quota exceeded'); assert.equal(failed.outputComplete, true)

@@ -71,6 +71,23 @@ The 3D office is a corporate floor with reception (with a live digital desk cloc
 
 Beside reception stands a **knowledge graph** hologram that represents your [graphify](https://graphify.com) code graph. It drifts slowly in blue while idle. When a running agent queries graphify through MCP, its nodes light up in that agent's colour, spin faster, and the floating *Knowledge* label shows how many agents are reading it (for 45 seconds after each query). It reacts to tool-use events from all three providers (`mcp__graphify__*` in Claude Code, graphify tool names in Antigravity CLI, and Codex `mcp_tool_call` items from the `graphify` server). Agents only use graphify if it is set up as an MCP server in their CLI.
 
+### Team knowledge base
+
+Click the hologram or its *Knowledge* label to open the **knowledge base**: durable notes your team keeps about the current project folder (decisions and their reasons, conventions, gotchas, how things work). Notes are stored locally in `knowledge.json` next to the task history, separately for each project folder.
+
+- **Graph**: a graphify-style map of the notes. Each note links to the tags and files it mentions, so related knowledge clusters together. Drag to pan, scroll to zoom, hover to trace links, click a note to read it, or click a tag or file to highlight everything connected to it. Search lights up matching notes.
+- **Notes**: search, read, edit and delete notes, or write one yourself with **New note**.
+- **Review**: drafts proposed by agents. **Keep** shares a draft with the team; **Discard** deletes it. Agents never see drafts.
+- **Graphify activity**: which agents queried graphify, with which tool and for which task.
+
+How agents use it:
+
+1. **Before a task**, the most relevant kept notes (up to three, matched by keywords in the task) are added to the agent's instructions as background reference. The task feed says which notes were shared.
+2. **During a task**, Claude Code and Codex also get an `agent-office` MCP server for that run with `search_knowledge`, `read_note` and `add_note` tools. Nothing needs configuring; your own MCP servers stay as they are. Antigravity CLI only reads MCP servers from its global config, so it relies on step 1 and 3.
+3. **After a task**, an agent can end its reply with a `KNOWLEDGE NOTE:` section (title, a few sentences, optional `Tags:` and `Files:` lines). It becomes a draft in **Review**, together with the files the agent edited.
+
+Notes are reference material, not instructions: agents are told they may be out of date and must verify them against the code.
+
 The initial overview frames the team. Select a card or character to inspect it; the camera follows that character during a walk. Use the bottom-right overview button to see the full floor again. For rendering efficiency, **teams over 50 show the 50 nearest detailed avatars/workstations, with simplified characters, furniture and bay decoration for the remainder**. Selecting a distant agent promotes it to detailed display. Simplified distant characters show standing/seated work state without detailed idle routines. A roster of 1000 does not mean the machine can run 1000 CLI jobs; hardware, provider limits and the overlapping-project guard still apply.
 
 **Customize your office in Settings → Office appearance:** choose bright white/daylight, midnight or warm color palettes; compact, balanced or spacious layouts; an office-wide accent color; and individual colors for all nine departments. Pick off, subtle or lively avatar movement. Open team bays and connecting aisles are regenerated from the live roster and department assignments. Appearance preferences persist in the current browser; agent profiles and task history remain in the local API data directory. A working agent returns along clear aisles, approaches the chair, sits facing the monitor and stays seated until the activity ends. When idle, an agent can take a routed coffee break: it walks to the shared kitchenette, lifts a mug for a sip, waits briefly and returns to its post. Movement preferences control this behavior. Coffee breaks are ambient presentation only; task phase/status remains tied to API execution events, and the characters do not claim to be having a real conversation or completing work. See [the audit and verification record](docs/AUDIT-2026-10-13.md) and [the reference decision record](docs/REFERENCE-DECISIONS.md) for ideas reviewed from related open-source projects.

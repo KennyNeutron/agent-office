@@ -67,7 +67,14 @@ export interface OfficeSchedule extends ScheduleInput {
   lastStatus: 'launched' | 'waiting' | 'failed' | null
   lastMessage: string
 }
-export interface ServerState { connected: boolean; codexAvailable: boolean; providers: ProviderInfo[]; defaultWorkspace: string; tasks: OfficeTask[]; agents: OfficeAgent[]; schedules?: OfficeSchedule[] }
+export interface ServerState { connected: boolean; codexAvailable: boolean; providers: ProviderInfo[]; defaultWorkspace: string; tasks: OfficeTask[]; agents: OfficeAgent[]; schedules?: OfficeSchedule[]; knowledgeVersion?: number }
+/** Editable fields of a team knowledge note. */
+export interface NoteInput { title: string; body: string; tags: string[]; files: string[] }
+/** A durable note in a project's team knowledge base (drafts await the user's review). */
+export interface OfficeNote extends NoteInput {
+  id: string; workspace: string; status: 'draft' | 'active'; source: 'manual' | 'agent' | 'task'
+  agentId: AgentId | null; taskId: string | null; createdAt: string; updatedAt: string
+}
 
 export const DEFAULT_AGENTS: OfficeAgent[] = [
   { id: 'atlas', name: 'Atlas', role: 'Tech Lead', specialty: 'Architecture & planning', color: '#8b82ff', short: 'AT', department: 'architecture' },

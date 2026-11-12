@@ -2,8 +2,10 @@ import { useLayoutEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 /** Native dialogs make the background inert and contain keyboard focus. */
-export function Modal({ children, close, busy = false, labelledBy }: {
+export function Modal({ children, close, busy = false, labelledBy, wide = false }: {
   children: ReactNode;
+  /** A wider dialog, for content such as the knowledge graph. */
+  wide?: boolean;
   close: () => void;
   busy?: boolean;
   labelledBy: string;
@@ -32,6 +34,6 @@ export function Modal({ children, close, busy = false, labelledBy }: {
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     }}
     onMouseDown={event => { if (event.target === event.currentTarget && !busy) close(); }}>
-    <div className="modal">{children}</div>
+    <div className={wide ? 'modal modal-wide' : 'modal'}>{children}</div>
   </dialog>, document.body);
 }

@@ -231,7 +231,7 @@ function Workstation({ seat, simulation, selected, pose, onSelect, preferences, 
   </group>
 }
 
-function Studio({ translate, selected, tasks, schedules, readers, onOpenSchedules, onSelect, now, overlayId, layout, visibleSeats, distantSeats, overview, preferences }: { selected: AgentId; tasks: OfficeTask[]; schedules: OfficeSchedule[]; readers: KnowledgeReader[]; onOpenSchedules: () => void; onSelect: (value: AgentId) => void; now: number; overlayId: string; layout: OfficeLayout; visibleSeats: Seat[]; distantSeats: Seat[]; overview: boolean; preferences: OfficePreferences; translate: (text: string) => string }) {
+function Studio({ translate, selected, tasks, schedules, readers, onOpenSchedules, onOpenKnowledge, onSelect, now, overlayId, layout, visibleSeats, distantSeats, overview, preferences }: { selected: AgentId; tasks: OfficeTask[]; schedules: OfficeSchedule[]; readers: KnowledgeReader[]; onOpenSchedules: () => void; onOpenKnowledge: () => void; onSelect: (value: AgentId) => void; now: number; overlayId: string; layout: OfficeLayout; visibleSeats: Seat[]; distantSeats: Seat[]; overview: boolean; preferences: OfficePreferences; translate: (text: string) => string }) {
   const { size } = useThree()
   const avatars = useRef(new Map<string, Group>())
   const agents = useAgents()
@@ -282,7 +282,7 @@ function Studio({ translate, selected, tasks, schedules, readers, onOpenSchedule
     <PingPongBall layout={layout} simulation={simulation}/>
     <OfficePetsView pets={pets}/>
     <ScheduleBoard layout={layout} schedules={schedules} agents={agents} accent={preferences.accent} onOpen={onOpenSchedules}/>
-    <KnowledgeGraph layout={layout} readers={readers} agents={agents} accent={preferences.accent} animate={preferences.motion !== 'off'}/>
+    <KnowledgeGraph layout={layout} readers={readers} agents={agents} accent={preferences.accent} animate={preferences.motion !== 'off'} onOpen={onOpenKnowledge}/>
     <BadgeProjector translate={translate} overlayId={overlayId} seats={visibleSeats} sectors={layout.sectors} avatars={avatars} board={board} knowledge={knowledge}/>
     <OrthographicCamera key={`${cameraKey}-camera`} makeDefault position={[target[0] + 15, target[1] + 17, target[2] + 19]} zoom={overview ? overviewZoom : 42} near={.1} far={Math.max(250, layout.width + layout.depth + 100)} />
     <OrbitControls key={`${cameraKey}-controls`} makeDefault target={target} minPolarAngle={.25} maxPolarAngle={1.46} enablePan enableDamping dampingFactor={.08} minZoom={overview ? Math.min(2, overviewZoom) : 12} maxZoom={165} />
@@ -290,7 +290,7 @@ function Studio({ translate, selected, tasks, schedules, readers, onOpenSchedule
   </>
 }
 
-export default function OfficeScene({ selected, tasks, schedules = [], onOpenSchedules = () => {}, onSelect, overview = false }: { selected: AgentId; tasks: OfficeTask[]; schedules?: OfficeSchedule[]; onOpenSchedules?: (agentId?: AgentId | null) => void; onSelect: (value: AgentId) => void; overview?: boolean }) {
+export default function OfficeScene({ selected, tasks, schedules = [], onOpenSchedules = () => {}, onOpenKnowledge = () => {}, onSelect, overview = false }: { selected: AgentId; tasks: OfficeTask[]; schedules?: OfficeSchedule[]; onOpenSchedules?: (agentId?: AgentId | null) => void; onOpenKnowledge?: () => void; onSelect: (value: AgentId) => void; overview?: boolean }) {
   const { t: tr } = useLanguage()
   const agents = useAgents()
   const { preferences } = useOfficePreferences()
@@ -363,7 +363,7 @@ export default function OfficeScene({ selected, tasks, schedules = [], onOpenSch
   }, [tasks, now])
   return <div className="office-3d-shell" data-office-theme={preferences.theme} data-office-motion={effectivePreferences.motion} data-layout-transition={presentation.phase} aria-busy={presentation.phase !== 'ready'}>
     <Canvas shadows dpr={[1, 1.5]} gl={{ antialias: true, alpha: false }} onPointerMissed={() => { }}>
-      <Studio key={presentation.key} translate={tr} selected={selected} tasks={tasks} schedules={schedules} readers={readers} onOpenSchedules={() => onOpenSchedules(null)} onSelect={onSelect} now={now} overlayId={overlayId} layout={layout} visibleSeats={visibleSeats} distantSeats={distantSeats} overview={overview} preferences={effectivePreferences}/>
+      <Studio key={presentation.key} translate={tr} selected={selected} tasks={tasks} schedules={schedules} readers={readers} onOpenSchedules={() => onOpenSchedules(null)} onOpenKnowledge={onOpenKnowledge} onSelect={onSelect} now={now} overlayId={overlayId} layout={layout} visibleSeats={visibleSeats} distantSeats={distantSeats} overview={overview} preferences={effectivePreferences}/>
     </Canvas>
     {presentation.phase === 'closing' && <div className="scene-layout-loading" role="status">{tr('Loading 3D office…')}</div>}
     <div id={overlayId} className={`scene-phase-overlay${overview ? ' is-overview' : ''}`} aria-label={tr('Current phase')}>
@@ -379,10 +379,10 @@ export default function OfficeScene({ selected, tasks, schedules = [], onOpenSch
         aria-label={`Open scheduled tasks (${upcomingCount} upcoming)`}>
         <CalendarClock size={12} aria-hidden="true"/>Schedules<b>{upcomingCount}</b>
       </button>
-      <span className={`scene-board-label scene-knowledge-label${readers.length ? ' is-reading' : ''}`} data-board="knowledge" role="status"
-        aria-label={readers.length ? `Knowledge graph: ${readers.length} agent${readers.length > 1 ? 's' : ''} reading` : 'Knowledge graph: idle'}>
+      <button type="button" className={`scene-board-label scene-knowledge-label${readers.length ? ' is-reading' : ''}`} data-board="knowledge" onClick={onOpenKnowledge}
+        aria-label={readers.length ? `Open knowledge graph (${readers.length} agent${readers.length > 1 ? 's' : ''} reading)` : 'Open knowledge graph'}>
         <Network size={12} aria-hidden="true"/>Knowledge{readers.length > 0 && <b>{readers.length}</b>}
-      </span>
+      </button>
       {layout.sectors.map(sector => <span key={sector.key} className="scene-sector-label" data-sector={sector.key}>
         <i style={{ background: preferences.sectorColors[sector.id] || DEPARTMENTS.find(dep => dep.id === sector.id)?.color }}/>{overview ? tr(DEPARTMENTS.find(dep => dep.id === sector.id)?.name || sector.id).split(/[ &]+/)[0] : tr(DEPARTMENTS.find(dep => dep.id === sector.id)?.name || sector.id)} · {sector.count}
       </span>)}

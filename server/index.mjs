@@ -3,13 +3,14 @@ import { spawn } from 'node:child_process'
 import { existsSync, realpathSync, statSync } from 'node:fs'
 import { mkdir, open, readFile, rename, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { discoverProviders, foldersOverlap, providerCommand, supportsPermissionMode } from './providers.mjs'
+import { discoverProviders, foldersOverlap, providerCommand, supportsKnowledgeMcp, supportsPermissionMode } from './providers.mjs'
 import { DEFAULT_AGENTS, makeAgent, validStoredAgents, validateAgent } from './agents.mjs'
 import { composeAgentPrompt } from './agent-prompt.mjs'
 import { MAX_SCHEDULES, isDue, makeSchedule, migrateSchedules, recordRun, staleOnceSchedule, validStoredSchedules, validateSchedule } from './schedules.mjs'
-import { jsonLines, parseMessage, shrink } from './task-output.mjs'
+import { jsonLines, parseMessage, shrink, taskFiles, taskReplies } from './task-output.mjs'
+import { capNotes, extractKnowledgeNote, makeNote, relevantNotes, searchNotes, validateNoteInput, validStoredNotes } from './knowledge.mjs'
 import { terminateProcess } from './processes.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -19,6 +20,8 @@ const ROOT = resolve(HERE, '..')
 const STORE = join(process.env.AGENT_OFFICE_DATA_DIR || join(ROOT, '.local'), 'tasks.json')
 const AGENT_STORE = join(dirname(STORE), 'agents.json')
 const SCHEDULE_STORE = join(dirname(STORE), 'schedules.json')
+const KNOWLEDGE_STORE = join(dirname(STORE), 'knowledge.json')
+const KNOWLEDGE_MCP = join(HERE, 'knowledge-mcp.mjs')
 // How often due schedules are checked. Tests shorten it.
 const SCHEDULER_MS = Math.max(200, Number(process.env.AGENT_OFFICE_SCHEDULER_MS) || 10_000)
 const PORT = Number(process.env.PORT || 4300)
@@ -32,6 +35,11 @@ let schedulesPersistChain = Promise.resolve()
 let schedulesReadable = true
 let schedulerTimer
 let schedulerRunning = false
+let notes = []
+let knowledgePersistChain = Promise.resolve()
+let knowledgeReadable = true
+// Bumped on every knowledge change so open browsers know to refetch.
+let knowledgeVersion = 0
 const active = new Map()
 const clients = new Set()
 let tasks = []
@@ -85,7 +93,8 @@ function snapshot() {
     agents,
     tasks: tasks.map(visible),
     schedules,
-    storage: { historyReadable, agentsReadable, schedulesReadable, historyWriteError },
+    knowledgeVersion,
+    storage: { historyReadable, agentsReadable, schedulesReadable, knowledgeReadable, historyWriteError },
   }
 }
 
@@ -151,6 +160,46 @@ async function loadSchedules() {
     if (error.code !== 'ENOENT') { schedulesReadable = false; console.error('Could not load schedules:', error.message) }
   }
 }
+
+// Same contract as schedules: serialized, atomic, acknowledged after the write.
+function changeKnowledge(edit) {
+  const operation = knowledgePersistChain.then(async () => {
+    if (!knowledgeReadable) throw new Error('Existing knowledge is unreadable; refusing to overwrite it.')
+    const update = edit(notes)
+    if (update.error) return update
+    const next = capNotes(update.next)
+    await atomicWrite(KNOWLEDGE_STORE, JSON.stringify(next, null, 2))
+    notes = next
+    knowledgeVersion++
+    notifyState()
+    return update
+  })
+  knowledgePersistChain = operation.then(() => {}, error => console.error('Could not save knowledge:', error.message))
+  return operation
+}
+
+async function loadKnowledge() {
+  try {
+    const stored = JSON.parse(await readFile(KNOWLEDGE_STORE, 'utf8'))
+    if (validStoredNotes(stored)) notes = stored
+    else throw new Error('Invalid knowledge.json; the original file was preserved.')
+  } catch (error) {
+    if (error.code !== 'ENOENT') { knowledgeReadable = false; console.error('Could not load knowledge:', error.message) }
+  }
+}
+
+/** Knowledge is kept per project folder, keyed by its canonical path. */
+function canonicalWorkspace(value) {
+  if (typeof value !== 'string' || !value || value.length > 1000 || value.includes('\0') || !isAbsolute(value)) return null
+  try { return statSync(value).isDirectory() ? realpathSync(value) : null } catch { return null }
+}
+const workspaceNotes = workspace => notes.filter(note => note.workspace === workspace)
+/** Workspace-relative path for a file a run edited, or null when it lies outside the project. */
+function projectPath(workspace, file) {
+  const path = isAbsolute(file) ? relative(workspace, file) : file
+  return !path || path.startsWith('..' + sep) || path === '..' || isAbsolute(path) ? null : path.split(sep).join('/')
+}
+const runningTask = id => typeof id === 'string' ? tasks.find(task => task.id === id && task.status === 'running') : undefined
 
 function persistHistory() {
   if (!historyReadable) return Promise.reject(new Error('Existing history is unreadable; refusing to overwrite it.'))
@@ -246,6 +295,84 @@ app.delete('/api/agents/:id', async (req, res) => {
     res.json({ ok: true })
   } catch { res.status(500).json({ error: 'Could not save agent profile.' }) }
 })
+
+// ---- Team knowledge -------------------------------------------------------
+function knowledgeRoute(handler) {
+  return async (req, res) => {
+    try {
+      if (!knowledgeReadable && req.method !== 'GET') return res.status(503).json({ error: 'The knowledge file is unreadable. Preserve and repair it before editing notes.' })
+      const result = await handler(req)
+      if (result.error) return res.status(result.status || 400).json({ error: result.error })
+      res.status(result.status || 200).json(result.body)
+    } catch { res.status(500).json({ error: 'Could not save the note.' }) }
+  }
+}
+const noteFields = body => ({ title: body?.title, body: body?.body, tags: body?.tags, files: body?.files })
+app.get('/api/knowledge', knowledgeRoute(async req => {
+  const workspace = canonicalWorkspace(req.query.workspace)
+  if (!workspace) return { error: 'Project directory was not found.' }
+  await knowledgePersistChain
+  return { body: { workspace, notes: workspaceNotes(workspace).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)) } }
+}))
+// Used by the agents' MCP bridge; reads are logged on the task that made them.
+app.get('/api/knowledge/search', knowledgeRoute(async req => {
+  const workspace = canonicalWorkspace(req.query.workspace)
+  if (!workspace) return { error: 'Project directory was not found.' }
+  const query = typeof req.query.q === 'string' ? req.query.q.slice(0, 500) : ''
+  const results = searchNotes(workspaceNotes(workspace), query, { limit: Math.min(10, Math.max(1, Number(req.query.limit) || 5)) })
+  const task = runningTask(req.query.task)
+  if (task) addEvent(task, `Searched team knowledge for "${shrink(query, 60)}" (${results.length} note${results.length === 1 ? '' : 's'}).`)
+  return { body: { results } }
+}))
+app.post('/api/knowledge/drafts', knowledgeRoute(async req => {
+  const workspace = canonicalWorkspace(req.body?.workspace)
+  if (!workspace) return { error: 'Project directory was not found.' }
+  const error = validateNoteInput(noteFields(req.body))
+  if (error) return { error }
+  const task = runningTask(req.body.taskId)
+  const result = await changeKnowledge(current => {
+    const note = makeNote(noteFields(req.body), { id: randomUUID(), workspace, status: 'draft', source: 'agent', agentId: task?.agentId ?? null, taskId: task?.id ?? null })
+    return { next: [...current, note], note }
+  })
+  if (task) addEvent(task, `Proposed knowledge note "${shrink(result.note.title, 60)}" for review.`)
+  return { status: 201, body: { note: result.note } }
+}))
+app.get('/api/knowledge/:id', knowledgeRoute(async req => {
+  const workspace = canonicalWorkspace(req.query.workspace)
+  const note = notes.find(item => item.id === req.params.id && item.workspace === workspace)
+  if (!note) return { status: 404, error: 'Note not found.' }
+  const task = runningTask(req.query.task)
+  if (task) addEvent(task, `Read team note "${shrink(note.title, 60)}".`)
+  return { body: { note } }
+}))
+app.post('/api/knowledge', knowledgeRoute(async req => {
+  const workspace = canonicalWorkspace(req.body?.workspace)
+  if (!workspace) return { error: 'Project directory was not found.' }
+  const error = validateNoteInput(noteFields(req.body))
+  if (error) return { error }
+  const result = await changeKnowledge(current => {
+    const note = makeNote(noteFields(req.body), { id: randomUUID(), workspace })
+    return { next: [...current, note], note }
+  })
+  return { status: 201, body: { note: result.note } }
+}))
+app.put('/api/knowledge/:id', knowledgeRoute(async req => {
+  const error = validateNoteInput(noteFields(req.body))
+  if (error) return { error }
+  if (req.body.status != null && !['draft', 'active'].includes(req.body.status)) return { error: 'Invalid note status.' }
+  const result = await changeKnowledge(current => {
+    const previous = current.find(item => item.id === req.params.id)
+    if (!previous) return { status: 404, error: 'Note not found.' }
+    const note = makeNote({ ...noteFields(req.body), status: req.body.status }, {}, previous)
+    return { next: current.map(item => item.id === note.id ? note : item), note }
+  })
+  return result.error ? result : { body: { note: result.note } }
+}))
+app.delete('/api/knowledge/:id', knowledgeRoute(async req => {
+  const result = await changeKnowledge(current => current.some(item => item.id === req.params.id)
+    ? { next: current.filter(item => item.id !== req.params.id) } : { status: 404, error: 'Note not found.' })
+  return result.error ? result : { body: { ok: true } }
+}))
 
 // Live schedules must name an existing agent and an absolute project folder.
 // Provider availability is checked when the schedule runs.
@@ -415,8 +542,14 @@ async function launchTask(request, schedule = null) {
     return reply(409, { error: 'Task stopped before launch.' })
   }
 
-  const executionPrompt = composeAgentPrompt(agent, task.prompt)
-  const { command, args, input } = providerCommand(provider, canonical, executionPrompt, permissionMode)
+  // Team knowledge: the most relevant approved notes go into the instructions, and
+  // Claude Code / Codex also get the knowledge MCP tools for this run.
+  const shared = knowledgeReadable ? relevantNotes(workspaceNotes(canonical), task.prompt) : []
+  if (shared.length) addEvent(task, shrink(`Shared ${shared.length} team note${shared.length > 1 ? 's' : ''}: ${shared.map(note => `"${note.title}"`).join(', ')}.`, 300))
+  const mcp = knowledgeReadable && supportsKnowledgeMcp(provider.id)
+    ? { command: process.execPath, args: [KNOWLEDGE_MCP, '--url', `http://127.0.0.1:${PORT}`, '--workspace', canonical, '--task', task.id, '--agent', agentId] } : null
+  const executionPrompt = composeAgentPrompt(agent, task.prompt, { notes: shared, mcp: Boolean(mcp) })
+  const { command, args, input } = providerCommand(provider, canonical, executionPrompt, permissionMode, mcp)
   let child
   try { child = spawn(command, args, { cwd: canonical, shell: false, windowsHide: true,
     detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }) }
@@ -458,6 +591,18 @@ async function launchTask(request, schedule = null) {
       (code === 0 ? 'Provider exited without a completion event.' : `${provider.name} exited with code ${code}.`), 500)
     addEvent(task, task.status === 'completed' ? 'Provider run finished. See the agent reply for changes and verification.' : task.status === 'cancelled' ? 'Task cancelled.'
       : task.status === 'interrupted' ? 'Task interrupted by office shutdown.' : `Failed: ${task.failure}`, task.status === 'completed' ? 'success' : 'error')
+    // A completed run that ended with a KNOWLEDGE NOTE section becomes a draft for review.
+    const learned = task.status === 'completed' && knowledgeReadable ? extractKnowledgeNote(taskReplies.get(task)) : null
+    if (learned) {
+      const edited = [...(taskFiles.get(task) ?? [])].map(file => projectPath(canonical, file)).filter(Boolean)
+      const draft = { ...learned, files: [...learned.files, ...edited] }
+      if (!validateNoteInput(draft)) {
+        await changeKnowledge(current => {
+          const note = makeNote(draft, { id: randomUUID(), workspace: canonical, status: 'draft', source: 'task', agentId: task.agentId, taskId: task.id })
+          return { next: [...current, note], note }
+        }).then(({ note }) => addEvent(task, `Drafted knowledge note "${shrink(note.title, 60)}" for review.`)).catch(() => {})
+      }
+    }
     await persistHistory().catch(() => {})
     running.resolveDone()
   }
@@ -493,7 +638,7 @@ app.post('/api/tasks/:id/cancel', async (req, res) => {
   }
 })
 
-await Promise.all([loadHistory(), loadAgents(), loadSchedules()])
+await Promise.all([loadHistory(), loadAgents(), loadSchedules(), loadKnowledge()])
 if (existsSync(join(ROOT, 'dist', 'index.html'))) {
   app.use(express.static(join(ROOT, 'dist')))
   app.get('/', (_req, res) => res.sendFile(join(ROOT, 'dist', 'index.html')))
@@ -537,6 +682,7 @@ export function shutdown() {
     for (const result of results) if (result.status === 'rejected') { console.error(result.reason.message); process.exitCode = 1 }
     await agentsPersistChain
     await schedulesPersistChain
+    await knowledgePersistChain
     if (historyReadable) await persistHistory().catch(() => { process.exitCode = 1 })
     await closed
     clearTimeout(forceClose)

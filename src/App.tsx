@@ -8,6 +8,7 @@ import { Dot } from './components/Avatar';
 import { Sidebar } from './components/Sidebar';
 import { NewTask } from './components/NewTask';
 import { ScheduleManager } from './components/ScheduleManager';
+import { KnowledgePanel } from './components/KnowledgePanel';
 import { isDue, makeSchedule, migrateSchedules, recordRun, staleOnceSchedule, validStoredSchedules, validateSchedule } from '../server/schedules.mjs';
 import { isAbsoluteWorkspace, isOfficeTask, isServerState, readResponse } from './components/dataFlow';
 import { bundledDemoIds } from './components/taskDisplay';
@@ -86,6 +87,7 @@ export default function App() {
   const [demoRoster, setDemoRoster] = useState<OfficeAgent[]>(loadDemoRoster);
   const [demoSchedules, setDemoSchedules] = useState<OfficeSchedule[]>(loadDemoSchedules);
   const [scheduleModal, setScheduleModal] = useState<{ agentId: AgentId | null } | null>(null);
+  const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const [savedWorkspace] = useState(() => readPreference('agent-office-workspace'));
   const [workspace, setWorkspace] = useState(savedWorkspace ?? '');
   const [officePreferences, setOfficePreferences] = useState(loadOfficePreferences);
@@ -409,7 +411,7 @@ export default function App() {
             <span>{tr(loading ? 'Loading workspace…' : server ? 'Showing saved activity; the API is offline.' : 'Unable to load workspace')}</span>
             {!loading && <button type="button" onClick={() => { setLoading(true); void reloadState(); }}>{tr('Retry')}</button>}
           </div>}
-          {view === 'studio' && <Studio tasks={tasks} schedules={schedules} onSchedules={openSchedules} selected={inspectedAgent} setSelected={selectAgent} selectedTask={selectedTask} setSelectedTask={setSelectedTask} onNew={() => showNew()} demo={demo} ready={cliReady}/>}
+          {view === 'studio' && <Studio tasks={tasks} schedules={schedules} onSchedules={openSchedules} onKnowledge={() => setKnowledgeOpen(true)} selected={inspectedAgent} setSelected={selectAgent} selectedTask={selectedTask} setSelectedTask={setSelectedTask} onNew={() => showNew()} demo={demo} ready={cliReady}/>}
           {view === 'tasks' && <TaskList tasks={tasks} onSelect={(id, taskId) => { setSelected(id); setSelectedTask(taskId); setView('studio'); }} cancel={cancel} canCancel={demo || online}/>}
           {view === 'team' && <Team tasks={tasks} onTask={showNew} onSave={saveAgent} onDelete={deleteAgent} connected={demo || online} demo={demo}/>}
           {view === 'settings' && <Settings workspace={workspace} setWorkspace={editWorkspace} demo={demo} setDemo={changeMode} server={server} online={online} publicPreview={PUBLIC_DEMO}/>}
@@ -420,6 +422,8 @@ export default function App() {
       {scheduleModal && agents.length > 0 && <ScheduleManager schedules={schedules} tasks={tasks} initialAgent={scheduleModal.agentId} providers={server?.providers || []} defaultProvider={provider} workspace={workspace} demo={demo} online={online}
         close={() => setScheduleModal(null)} onSave={saveSchedule} onDelete={deleteSchedule} onRun={runSchedule}
         onShowTask={(agentId, taskId) => { setScheduleModal(null); setSelected(agentId); setSelectedTask(taskId); setView('studio'); }}/>}
+      {knowledgeOpen && <KnowledgePanel tasks={tasks} workspace={workspace} demo={demo} online={online} version={server?.knowledgeVersion ?? 0} close={() => setKnowledgeOpen(false)}
+        onShowTask={(agentId, taskId) => { setKnowledgeOpen(false); setSelected(agentId); setSelectedTask(taskId); setView('studio'); }}/>}
       {toast && <div className={'toast toast-' + toast.kind} role={toast.kind === 'error' ? 'alert' : 'status'}><ToastIcon size={17}/>{toast.message}<button onClick={() => { window.clearTimeout(toastTimer.current); setToast(null); }} aria-label={tr('Dismiss toast')}><X size={14}/></button></div>}
     </div>
   </AgentsContext.Provider></OfficePreferencesContext.Provider>;
