@@ -29,6 +29,7 @@ export function validateSchedule(input) {
   if (!SCHEDULE_PERMISSIONS.includes(input.permissionMode) || (input.provider === 'antigravity' && input.permissionMode === 'approve-for-me')) return 'This permission mode is unavailable for the selected provider.'
   if (!SCHEDULE_REPEATS.includes(input.repeat)) return 'Unknown repeat option.'
   if (typeof input.enabled !== 'boolean') return 'Invalid enabled flag.'
+  if (input.useAgentDefaults != null && typeof input.useAgentDefaults !== 'boolean') return 'Invalid agent defaults flag.'
   if ((input.repeat === 'once' || input.repeat === 'interval') && !validDate(input.runAt)) return 'Choose a valid start date and time.'
   if (input.repeat === 'interval' && (!Number.isInteger(input.intervalMinutes) || input.intervalMinutes < MIN_INTERVAL_MINUTES || input.intervalMinutes > MAX_INTERVAL_MINUTES)) {
     return `Repeat interval must be between ${MIN_INTERVAL_MINUTES} minutes and 7 days.`
@@ -75,6 +76,8 @@ export function makeSchedule(input, id, now = new Date(), previous = null) {
     workspace: input.workspace,
     provider: input.provider,
     permissionMode: input.permissionMode,
+    // When set, each run uses the agent's current default provider and permissions.
+    useAgentDefaults: input.useAgentDefaults === true,
     repeat: input.repeat,
     runAt: input.repeat === 'once' || input.repeat === 'interval' ? new Date(Date.parse(input.runAt)).toISOString() : null,
     intervalMinutes: input.repeat === 'interval' ? input.intervalMinutes : null,

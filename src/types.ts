@@ -15,6 +15,10 @@ export interface OfficeAgent {
   color: string
   short: string
   department: Department
+  /** Default AI provider for this agent's tasks; null/undefined uses the office's last choice. */
+  provider?: ProviderId | null
+  /** Default permissions for this agent's tasks. */
+  permissionMode?: PermissionMode
 }
 export interface TaskEvent { id: string; at: string; kind: string; message: string }
 export interface OfficeTask {
@@ -55,6 +59,8 @@ export interface ScheduleInput {
   /** 0 = Sunday … 6 = Saturday, for 'weekly'. */
   days: number[] | null
   enabled: boolean
+  /** Each run uses the agent's current default provider and permissions instead of the saved ones. */
+  useAgentDefaults?: boolean
 }
 export interface OfficeSchedule extends ScheduleInput {
   id: string

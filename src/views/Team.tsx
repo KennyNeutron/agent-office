@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { ArrowRight, Pencil, Plus, Trash2, X } from 'lucide-react';
-import type { AgentId, Department, OfficeAgent, OfficeTask } from '../types';
+import type { AgentId, Department, OfficeAgent, OfficeTask, PermissionMode, ProviderId, ProviderInfo } from '../types';
 import { DEPARTMENTS, displayAgentText, suggestDepartment, useAgents } from '../agents';
 import { useLanguage } from '../locales/i18n';
 import { Avatar, Dot } from '../components/Avatar';
@@ -8,10 +8,13 @@ import { icons } from '../components/taskDisplay';
 import { Modal } from '../components/Modal';
 
 type AgentInput = Omit<OfficeAgent, 'id' | 'short'>;
-const blank: AgentInput = { name: '', role: '', specialty: '', department: 'general', color: '#8b82ff' };
+const blank: AgentInput = { name: '', role: '', specialty: '', department: 'general', color: '#8b82ff', provider: null, permissionMode: 'restricted' };
+const PROVIDER_NAMES: Record<ProviderId, string> = { codex: 'Codex CLI', claude: 'Claude Code', antigravity: 'Antigravity CLI' };
+const PERMISSION_NAMES: Record<PermissionMode, string> = { restricted: 'Restricted', 'approve-for-me': 'Approve for me', 'full-access': 'Full Access' };
 
-export function Team({ tasks, onTask, onSave, onDelete, connected, demo }: {
+export function Team({ tasks, providers, onTask, onSave, onDelete, connected, demo }: {
   tasks: OfficeTask[];
+  providers: ProviderInfo[];
   onTask: (id: AgentId) => void;
   onSave: (agent: AgentInput, id?: string) => Promise<boolean>;
   onDelete: (id: string) => Promise<boolean>;
@@ -28,10 +31,12 @@ export function Team({ tasks, onTask, onSave, onDelete, connected, demo }: {
   const [error, setError] = useState('');
   const open = (agent?: OfficeAgent) => {
     setError('');
-    setForm(agent ? { name: agent.name, role: agent.role, specialty: agent.specialty, department: agent.department, color: agent.color } : blank);
+    setForm(agent ? { name: agent.name, role: agent.role, specialty: agent.specialty, department: agent.department, color: agent.color,
+      provider: agent.provider ?? null, permissionMode: agent.permissionMode ?? 'restricted' } : blank);
     setCustomDepartment(Boolean(agent));
     setEditing(agent?.id ?? 'new');
   };
+  const providerName = (id: ProviderId) => providers.find(item => item.id === id)?.name || PROVIDER_NAMES[id];
   const changeProfile = (field: 'role' | 'specialty', value: string) => {
     setForm(previous => {
       const next = { ...previous, [field]: value };
@@ -72,6 +77,8 @@ export function Team({ tasks, onTask, onSave, onDelete, connected, demo }: {
         <div className="agent-card-row"><Avatar id={a.id} size="lg"/><span className={`pill-status ${working ? 'running' : 'idle'}`}><Dot status={working ? 'running' : 'idle'}/>{working ? tr('Working') : tr('Available')}</span></div>
         <h2>{a.name}</h2><span className="agent-role"><Icon size={16}/>{displayAgentText(a, 'role', tr)}</span><p>{displayAgentText(a, 'specialty', tr)}</p>
         <span className="department-pill">{tr(DEPARTMENTS.find(dep => dep.id === a.department)?.name || 'Shared workstations')}</span>
+        {(a.provider || (a.permissionMode && a.permissionMode !== 'restricted')) && <span className="department-pill agent-defaults" title={tr('Default AI provider and permissions')}>
+          {a.provider ? providerName(a.provider) : tr('Office default')} · {tr(PERMISSION_NAMES[a.permissionMode ?? 'restricted'])}</span>}
         <div className="agent-card-foot"><span>{tasks.filter(t => t.agentId === a.id).length} {tr('total tasks')}</span><div className="roster-actions">
           <button title={tr('Edit agent')} aria-label={`${tr('Edit agent')} ${a.name}`} onClick={() => open(a)} disabled={!connected || busy}><Pencil size={15}/></button>
           <button title={tr('Remove agent')} aria-label={`${tr('Remove agent')} ${a.name}`} onClick={() => remove(a)} disabled={!connected || working || busy}><Trash2 size={15}/></button>
@@ -86,6 +93,21 @@ export function Team({ tasks, onTask, onSave, onDelete, connected, demo }: {
         <label htmlFor="agent-department">{tr('Department')}</label><select id="agent-department" className="language-picker" value={form.department} onChange={e => { setCustomDepartment(true); setForm(v => ({ ...v, department: e.target.value as Department })); }}>{DEPARTMENTS.map(dep => <option value={dep.id} key={dep.id}>{tr(dep.name)}</option>)}</select>
         <small className="department-hint">{tr(customDepartment ? 'Department selected manually.' : 'Suggested from the role and mission. You can change it.')}</small>
         <label htmlFor="agent-color">{tr('Color')}</label><input id="agent-color" type="color" value={form.color} onChange={e => setForm(v => ({ ...v, color: e.target.value }))}/>
+        <label htmlFor="agent-provider">{tr('Default AI provider')}</label><select id="agent-provider" className="language-picker" value={form.provider ?? ''}
+          onChange={e => { const provider = (e.target.value || null) as ProviderId | null; setForm(v => ({ ...v, provider, permissionMode: provider === 'antigravity' && v.permissionMode === 'approve-for-me' ? 'restricted' : v.permissionMode })); }}>
+          <option value="">{tr('Office default (last used)')}</option>
+          {(Object.keys(PROVIDER_NAMES) as ProviderId[]).map(id => { const missing = !demo && providers.length > 0 && !providers.some(item => item.id === id && item.available);
+            return <option key={id} value={id}>{providerName(id)}{missing ? ` (${tr('NOT FOUND')})` : ''}</option>; })}
+        </select>
+        <label htmlFor="agent-permissions">{tr('Default permissions')}</label><select id="agent-permissions" className="language-picker" value={form.permissionMode ?? 'restricted'} aria-describedby="agent-permissions-help"
+          onChange={e => setForm(v => ({ ...v, permissionMode: e.target.value as PermissionMode }))}>
+          <option value="restricted">{tr('Restricted')}</option>
+          <option value="approve-for-me" disabled={form.provider === 'antigravity'}>{tr('Approve for me')}</option>
+          <option value="full-access">{tr('Full Access')}</option>
+        </select>
+        <small id="agent-permissions-help" className="department-hint">{tr(form.permissionMode === 'full-access'
+          ? 'Tasks and schedules that follow this agent can edit files outside the project and run commands with your account permissions.'
+          : 'Pre-filled when you assign this agent a task, and used by schedules that follow the agent.')}</small>
       </div></fieldset>{error && <p id="agent-error" className="form-error" role="alert">{error}</p>}
       {!connected && <p className="form-error" role="status">{tr('API OFFLINE')}</p>}
       <div className="modal-bottom"><small>{tr(demo ? 'Demo changes stay in this browser.' : 'Agent profile and office placement are saved locally.')}</small><button type="submit" className="primary-btn" aria-describedby={error ? 'agent-error' : undefined} disabled={busy || !connected || !form.name.trim() || !form.role.trim() || !form.specialty.trim()}>{tr(busy ? 'Starting...' : 'Save agent')} <ArrowRight size={16}/></button></div>

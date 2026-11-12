@@ -1,6 +1,6 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { ArrowLeft, CalendarClock, Check, Pencil, Play, Plus, Trash2, X } from 'lucide-react';
-import type { AgentId, OfficeSchedule, OfficeTask, PermissionMode, ProviderId, ProviderInfo, ScheduleInput, ScheduleRepeat } from '../types';
+import type { AgentId, OfficeAgent, OfficeSchedule, OfficeTask, PermissionMode, ProviderId, ProviderInfo, ScheduleInput, ScheduleRepeat } from '../types';
 import { useAgents } from '../agents';
 import { describeRepeat, MAX_INTERVAL_MINUTES, MIN_INTERVAL_MINUTES } from '../../server/schedules.mjs';
 import { Avatar } from './Avatar';
@@ -31,14 +31,25 @@ function splitInterval(minutes: number | null): { value: number; unit: Unit } {
 type Draft = {
   title: string; agentId: AgentId; prompt: string; provider: ProviderId; permissionMode: PermissionMode; workspace: string;
   repeat: ScheduleRepeat; runAt: string; intervalValue: number; intervalUnit: Unit; time: string; days: number[]; enabled: boolean;
+  useAgentDefaults: boolean;
 };
-function draftFrom(schedule: OfficeSchedule | null, agentId: AgentId, provider: ProviderId, workspace: string): Draft {
+const PERMISSION_NAMES: Record<PermissionMode, string> = { restricted: 'Restricted', 'approve-for-me': 'Approve for me', 'full-access': 'Full Access' };
+/** The provider and permissions a run will use: the agent's defaults when the schedule follows the agent. */
+function effectiveLaunch(draft: Pick<Draft, 'provider' | 'permissionMode' | 'useAgentDefaults'>, agent: OfficeAgent | undefined) {
+  if (!draft.useAgentDefaults) return { provider: draft.provider, permissionMode: draft.permissionMode };
+  const provider = agent?.provider || draft.provider, permissionMode = agent?.permissionMode || 'restricted';
+  return { provider, permissionMode: provider === 'antigravity' && permissionMode === 'approve-for-me' ? 'restricted' as const : permissionMode };
+}
+function draftFrom(schedule: OfficeSchedule | null, agent: OfficeAgent | undefined, provider: ProviderId, workspace: string): Draft {
+  const agentId = agent?.id ?? '';
   const soon = new Date(Date.now() + 60 * 60_000);
   soon.setMinutes(0, 0, 0);
   const interval = splitInterval(schedule?.intervalMinutes ?? null);
   return {
     title: schedule?.title ?? '', agentId: schedule?.agentId ?? agentId, prompt: schedule?.prompt ?? '',
-    provider: schedule?.provider ?? provider, permissionMode: schedule?.permissionMode ?? 'restricted',
+    provider: schedule?.provider ?? agent?.provider ?? provider, permissionMode: schedule?.permissionMode ?? agent?.permissionMode ?? 'restricted',
+    // New schedules follow the agent; older ones keep the provider and permissions they were saved with.
+    useAgentDefaults: schedule ? Boolean(schedule.useAgentDefaults) : true,
     workspace: schedule?.workspace ?? workspace, repeat: schedule?.repeat ?? 'daily',
     runAt: schedule?.runAt ? localInput(new Date(schedule.runAt)) : localInput(soon),
     intervalValue: interval.value, intervalUnit: interval.unit, time: schedule?.time ?? '09:00',
@@ -80,10 +91,18 @@ export function ScheduleManager({ schedules, tasks, initialAgent, providers, def
 
   function openForm(schedule: OfficeSchedule | 'new') {
     const agentId = schedule === 'new' ? filter ?? agents[0]?.id ?? '' : schedule.agentId;
-    setDraft(draftFrom(schedule === 'new' ? null : schedule, agentId, defaultProvider, workspace));
+    setDraft(draftFrom(schedule === 'new' ? null : schedule, agents.find(item => item.id === agentId), defaultProvider, workspace));
     setEditing(schedule); setError(''); setOpenedAt(Date.now());
   }
   const update = (change: Partial<Draft>) => setDraft(value => value && { ...value, ...change });
+  const draftAgent = draft ? agents.find(item => item.id === draft.agentId) : undefined;
+  const launch = draft ? effectiveLaunch(draft, draftAgent) : null;
+  const providerName = (id: ProviderId) => options.find(item => item.id === id)?.name ?? id;
+  // Picking another agent pre-fills its defaults for schedules with their own settings.
+  const chooseAgent = (id: AgentId) => {
+    const agent = agents.find(item => item.id === id);
+    update(draft?.useAgentDefaults || !agent ? { agentId: id } : { agentId: id, provider: agent.provider || draft?.provider || defaultProvider, permissionMode: agent.permissionMode || 'restricted' });
+  };
 
   const minutes = draft ? Math.round(draft.intervalValue * UNITS[draft.intervalUnit]) : 0;
   const formError = !draft ? '' : !connected ? 'API OFFLINE'
@@ -98,10 +117,11 @@ export function ScheduleManager({ schedules, tasks, initialAgent, providers, def
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!draft || formError || busy) return;
+    if (!draft || !launch || formError || busy) return;
     const input: ScheduleInput = {
-      title: draft.title.trim(), agentId: draft.agentId, prompt: draft.prompt.trim(), provider: draft.provider,
-      permissionMode: draft.provider === 'antigravity' && draft.permissionMode === 'approve-for-me' ? 'restricted' : draft.permissionMode,
+      title: draft.title.trim(), agentId: draft.agentId, prompt: draft.prompt.trim(), provider: launch.provider,
+      permissionMode: launch.provider === 'antigravity' && launch.permissionMode === 'approve-for-me' ? 'restricted' : launch.permissionMode,
+      useAgentDefaults: draft.useAgentDefaults,
       workspace: demo ? 'Demo workspace' : draft.workspace, repeat: draft.repeat, enabled: draft.enabled,
       runAt: draft.repeat === 'once' || draft.repeat === 'interval' ? new Date(draft.runAt).toISOString() : null,
       intervalMinutes: draft.repeat === 'interval' ? minutes : null,
@@ -143,7 +163,7 @@ export function ScheduleManager({ schedules, tasks, initialAgent, providers, def
               <div>
                 <strong>{schedule.title || schedule.prompt}</strong>
                 {schedule.title && <p>{schedule.prompt}</p>}
-                <span className="schedule-meta">{agent?.name ?? schedule.agentId} · {describeRepeat(schedule)}{schedule.repeat === 'once' && schedule.runAt ? ` · ${formatScheduleTime(schedule.runAt)}` : ''}</span>
+                <span className="schedule-meta">{agent?.name ?? schedule.agentId} · {describeRepeat(schedule)}{schedule.repeat === 'once' && schedule.runAt ? ` · ${formatScheduleTime(schedule.runAt)}` : ''}{schedule.useAgentDefaults ? ' · Agent defaults' : ''}</span>
               </div>
               <label className="schedule-switch" title={schedule.enabled ? 'Pause schedule' : 'Resume schedule'}>
                 <input type="checkbox" checked={schedule.enabled} disabled={!connected || Boolean(busy)} onChange={() => void toggle(schedule)}
@@ -186,7 +206,7 @@ export function ScheduleManager({ schedules, tasks, initialAgent, providers, def
         <input id="schedule-name" maxLength={80} value={draft.title} onChange={event => update({ title: event.target.value })} placeholder="Nightly test run"/>
         <span id="schedule-assign" className="field-label">ASSIGN TO</span>
         <div className="modal-agent-list" role="group" aria-labelledby="schedule-assign">
-          {agents.map(agent => <button type="button" key={agent.id} aria-pressed={draft.agentId === agent.id} className={draft.agentId === agent.id ? 'selected' : ''} onClick={() => update({ agentId: agent.id })}>
+          {agents.map(agent => <button type="button" key={agent.id} aria-pressed={draft.agentId === agent.id} className={draft.agentId === agent.id ? 'selected' : ''} onClick={() => chooseAgent(agent.id)}>
             <Avatar id={agent.id} size="sm"/>{agent.name}{draft.agentId === agent.id && <Check size={14}/>}
           </button>)}
         </div>
@@ -228,18 +248,25 @@ export function ScheduleManager({ schedules, tasks, initialAgent, providers, def
               onClick={() => update({ days: draft.days.includes(index) ? draft.days.filter(item => item !== index) : [...draft.days, index].sort() })}>{day}</button>)}
           </div>
         </>}
-        <label htmlFor="schedule-provider">AI PROVIDER</label>
-        <select id="schedule-provider" className="language-picker" value={draft.provider} onChange={event => update({ provider: event.target.value as ProviderId, permissionMode: 'restricted' })}>
-          {options.map(item => <option key={item.id} value={item.id}>{item.name}{!demo && !item.available ? ' (not found)' : ''}</option>)}
-        </select>
-        {!demo && <>
-          <label htmlFor="schedule-permissions">AGENT PERMISSIONS</label>
-          <select id="schedule-permissions" className="language-picker" value={draft.permissionMode} onChange={event => update({ permissionMode: event.target.value as PermissionMode })}>
-            <option value="restricted">Restricted</option>
-            <option value="approve-for-me" disabled={draft.provider === 'antigravity'}>Approve for me</option>
-            <option value="full-access">Full Access</option>
+        <label className="schedule-enabled"><input type="checkbox" checked={draft.useAgentDefaults} onChange={event => update(event.target.checked ? { useAgentDefaults: true }
+          : { useAgentDefaults: false, provider: launch?.provider ?? draft.provider, permissionMode: launch?.permissionMode ?? draft.permissionMode })}/> Use {draftAgent?.name ?? 'the agent'}’s default AI provider and permissions</label>
+        {draft.useAgentDefaults && launch && <p className="mission-permissions-help">Each run uses the agent’s current defaults: {providerName(launch.provider)}{demo ? '' : ` · ${PERMISSION_NAMES[launch.permissionMode]}`}. Edit the agent to change them.</p>}
+        {(!draft.useAgentDefaults || !draftAgent?.provider) && <>
+          <label htmlFor="schedule-provider">{draft.useAgentDefaults ? 'AI PROVIDER (AGENT HAS NO DEFAULT)' : 'AI PROVIDER'}</label>
+          <select id="schedule-provider" className="language-picker" value={draft.provider} onChange={event => update({ provider: event.target.value as ProviderId, permissionMode: 'restricted' })}>
+            {options.map(item => <option key={item.id} value={item.id}>{item.name}{!demo && !item.available ? ' (not found)' : ''}</option>)}
           </select>
-          {draft.permissionMode === 'full-access' && <p className="mission-permissions-help">Every scheduled run can edit files outside the project and run commands with your account permissions, without anyone watching.</p>}
+        </>}
+        {!demo && <>
+          {!draft.useAgentDefaults && <>
+            <label htmlFor="schedule-permissions">AGENT PERMISSIONS</label>
+            <select id="schedule-permissions" className="language-picker" value={draft.permissionMode} onChange={event => update({ permissionMode: event.target.value as PermissionMode })}>
+              <option value="restricted">Restricted</option>
+              <option value="approve-for-me" disabled={draft.provider === 'antigravity'}>Approve for me</option>
+              <option value="full-access">Full Access</option>
+            </select>
+          </>}
+          {launch?.permissionMode === 'full-access' && <p className="mission-permissions-help">Every scheduled run can edit files outside the project and run commands with your account permissions, without anyone watching.</p>}
           <label htmlFor="schedule-dir">PROJECT DIRECTORY</label>
           <input id="schedule-dir" maxLength={1000} required value={draft.workspace} onChange={event => update({ workspace: event.target.value })} placeholder="Absolute project path"/>
         </>}

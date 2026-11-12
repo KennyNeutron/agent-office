@@ -215,6 +215,52 @@ test('all providers recognize terminal records without newline and persist ackno
   assert.equal((await f.request('/api/state')).body.tasks.filter(task => task.status === 'completed').length, 3)
 })
 
+test('agent default provider and permissions apply to tasks and to schedules that follow the agent', async t => {
+  const f = await fixture(t)
+  const atlas = { name: 'Atlas', role: 'Tech Lead', specialty: 'Architecture & planning', color: '#8b82ff', department: 'architecture' }
+  assert.equal((await f.request('/api/agents/atlas', 'PUT', { ...atlas, provider: 'antigravity', permissionMode: 'approve-for-me' })).status, 400)
+  assert.equal((await f.request('/api/agents/atlas', 'PUT', { ...atlas, provider: 'warp' })).status, 400)
+  const saved = await f.request('/api/agents/atlas', 'PUT', { ...atlas, provider: 'claude', permissionMode: 'full-access' })
+  assert.equal(saved.status, 200)
+  assert.equal(saved.body.agent.provider, 'claude'); assert.equal(saved.body.agent.permissionMode, 'full-access')
+  const finish = async id => until(async () => { const task = await f.task(id); return task.status !== 'running' && task })
+
+  // A task request that leaves the choices out uses the agent's defaults.
+  const implicit = await f.request('/api/tasks', 'POST', { agentId: 'atlas', workspace: f.workspace, prompt: 'Safe fixture task' })
+  assert.equal(implicit.status, 201)
+  assert.equal(implicit.body.task.provider, 'claude')
+  assert.ok(implicit.body.task.events.some(event => /Full Access/.test(event.message)))
+  await finish(implicit.body.task.id)
+  // An explicit choice still wins.
+  const explicit = await f.launch('codex', { permissionMode: 'restricted' })
+  assert.equal(explicit.body.task.provider, 'codex')
+  assert.ok(!explicit.body.task.events.some(event => /Full Access/.test(event.message)))
+  await finish(explicit.body.task.id)
+
+  const base = { agentId: 'atlas', prompt: 'Check', workspace: f.workspace, provider: 'codex', permissionMode: 'restricted',
+    repeat: 'daily', time: '09:00', runAt: null, intervalMinutes: null, days: null, enabled: false }
+  const follows = await f.request('/api/schedules', 'POST', { ...base, useAgentDefaults: true })
+  assert.equal(follows.status, 201); assert.equal(follows.body.schedule.useAgentDefaults, true)
+  const own = await f.request('/api/schedules', 'POST', base)
+  assert.equal(own.body.schedule.useAgentDefaults, false)
+  const followed = await f.request(`/api/schedules/${follows.body.schedule.id}/run`, 'POST', {})
+  assert.equal(followed.status, 201); assert.equal(followed.body.task.provider, 'claude')
+  assert.ok(followed.body.task.events.some(event => /Full Access/.test(event.message)))
+  await finish(followed.body.task.id)
+  const fixed = await f.request(`/api/schedules/${own.body.schedule.id}/run`, 'POST', {})
+  assert.equal(fixed.status, 201); assert.equal(fixed.body.task.provider, 'codex')
+  await finish(fixed.body.task.id)
+
+  // Profile edits reach following schedules on their next run; defaults survive a restart.
+  await f.request('/api/agents/atlas', 'PUT', { ...atlas, provider: 'antigravity', permissionMode: 'restricted' })
+  await f.stop(); await f.start()
+  const agent = (await f.request('/api/state')).body.agents.find(item => item.id === 'atlas')
+  assert.equal(agent.provider, 'antigravity')
+  const again = await f.request(`/api/schedules/${follows.body.schedule.id}/run`, 'POST', {})
+  assert.equal(again.body.task.provider, 'antigravity')
+  await finish(again.body.task.id)
+})
+
 test('structured provider failures and nonzero stderr exits cannot become successful tasks', async t => {
   const f = await fixture(t, 'failure')
   for (const provider of ['codex', 'claude', 'antigravity']) {

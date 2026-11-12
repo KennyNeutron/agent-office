@@ -28,7 +28,7 @@ const PORT = Number(process.env.PORT || 4300)
 const MAX_TASKS = 150
 const MAX_PROMPT = 10000
 const INSTANCE_ID = process.env.AGENT_OFFICE_INSTANCE_ID || randomUUID()
-let agents = DEFAULT_AGENTS.map(agent => ({ ...agent }))
+let agents = DEFAULT_AGENTS.map(agent => makeAgent(agent, agent.id))
 let agentsPersistChain = Promise.resolve()
 let schedules = []
 let schedulesPersistChain = Promise.resolve()
@@ -486,16 +486,21 @@ const reply = (status, body) => ({ status, body })
 async function launchTask(request, schedule = null) {
   if (!historyReadable) return reply(503, { error: 'Task history is unreadable. Preserve and repair the data file before launching tasks.' })
   if (!agentsReadable) return reply(503, { error: 'Agent profiles are unreadable. Preserve and repair the data file before launching tasks.' })
-  const { prompt, agentId, workspace, provider: requestedProvider = 'codex', permissionMode = 'restricted' } = request
-  const provider = providers.find(item => item.id === requestedProvider)
-  if (!provider) return reply(400, { error: 'Unknown AI provider.' })
-  if (!supportsPermissionMode(provider.id, permissionMode)) return reply(400, { error: 'This permission mode is unavailable for the selected provider.' })
-  if (!provider.available) return reply(503, { error: `${provider.name} was not found. Install and authenticate the CLI, then restart Agent Office.` })
+  const { prompt, agentId, workspace } = request
   // An in-flight roster write must finish before resolving the selected agent.
   // Otherwise deletion could commit after this task reserves that same profile.
   await agentsPersistChain
   const agent = agents.find(item => item.id === agentId)
   if (!agent) return reply(400, { error: 'Unknown agent.' })
+  // The agent's defaults apply when the request leaves a choice out, and always for
+  // schedules that follow the agent, so profile edits reach their future runs.
+  const followAgent = Boolean(schedule?.useAgentDefaults)
+  const requestedProvider = (followAgent && agent.provider) || request.provider || agent.provider || 'codex'
+  const permissionMode = (followAgent ? agent.permissionMode : request.permissionMode) || agent.permissionMode || 'restricted'
+  const provider = providers.find(item => item.id === requestedProvider)
+  if (!provider) return reply(400, { error: 'Unknown AI provider.' })
+  if (!supportsPermissionMode(provider.id, permissionMode)) return reply(400, { error: 'This permission mode is unavailable for the selected provider.' })
+  if (!provider.available) return reply(503, { error: `${provider.name} was not found. Install and authenticate the CLI, then restart Agent Office.` })
   if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > MAX_PROMPT) return reply(400, { error: 'Task is empty or too long.' })
   if (typeof workspace !== 'string' || workspace.length > 1000 || workspace.includes('\0') || !isAbsolute(workspace)) return reply(400, { error: 'Enter an absolute project directory path.' })
   try {

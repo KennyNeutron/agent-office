@@ -104,6 +104,7 @@ footer{padding:20px 37px;display:flex;justify-content:space-between;gap:10px;bor
 .department-summary{display:flex;flex-wrap:wrap;gap:9px;margin:-8px 0 23px}.department-summary span,.department-pill{display:inline-flex;align-items:center;gap:7px;padding:7px 10px;border-radius:8px;border:1px solid #e2e7f0;background:#f3f6fc;color:#617089;font-size:11px;font-weight:700}
 .department-summary i{width:8px;height:8px;border-radius:50%}
 .department-pill{margin:0 0 14px;background:#fbfbfe}
+.agent-defaults{margin-left:6px}
 .roster-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
 .agent-card-foot .roster-actions button{min-height:32px;padding:8px;border-radius:8px}
 .agent-card-foot .roster-actions button:disabled{opacity:.38;cursor:not-allowed}

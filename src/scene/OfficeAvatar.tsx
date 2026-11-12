@@ -191,7 +191,8 @@ export function OfficeAvatar({ agent, pose, selected, onSelect, walkRef, gaitRef
             args={[.031, .047, finger === 1 || finger === 2 ? .112 : .09]} radius={.015} castShadow>
             <meshStandardMaterial color={skin} roughness={.86}/>
           </RoundedBox>)}
-          <RoundedBox position={[side * .102, -.026, .012]} rotation={[0, side * .3, 0]}
+          {/* Palm down with fingers forward, the thumb sits on the inner side, toward the body's midline. */}
+          <RoundedBox position={[-side * .102, -.026, .012]} rotation={[0, -side * .3, 0]}
             args={[.058, .061, .085]} radius={.025} castShadow>
             <meshStandardMaterial color={skin} roughness={.86}/>
           </RoundedBox>

@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
+export const AGENT_PROVIDERS = ['codex', 'claude', 'antigravity']
+export const AGENT_PERMISSIONS = ['restricted', 'approve-for-me', 'full-access']
 export const DEPARTMENTS = ['architecture', 'engineering', 'design', 'quality', 'research', 'operations', 'security', 'data', 'general']
 export const DEFAULT_AGENTS = [
   { id: 'atlas', name: 'Atlas', role: 'Tech Lead', specialty: 'Architecture & planning', color: '#8b82ff', short: 'AT', department: 'architecture' },
@@ -17,13 +19,18 @@ export function validateAgent(input) {
   if (!validText(input.specialty, 180)) return 'Agent specialty must be 1–180 characters.'
   if (!DEPARTMENTS.includes(input.department)) return 'Unknown department.'
   if (typeof input.color !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(input.color)) return 'Invalid agent color.'
+  // Optional launch defaults: used for this agent's tasks and schedules that follow the agent.
+  if (input.provider != null && !AGENT_PROVIDERS.includes(input.provider)) return 'Unknown AI provider.'
+  if (input.permissionMode != null && !AGENT_PERMISSIONS.includes(input.permissionMode)) return 'Unknown permission mode.'
+  if (input.provider === 'antigravity' && input.permissionMode === 'approve-for-me') return 'This permission mode is unavailable for the selected provider.'
   return null
 }
 
 export function makeAgent(input, id = randomUUID()) {
   const name = input.name.trim()
   return { id, name, role: input.role.trim(), specialty: input.specialty.trim(),
-    color: input.color, department: input.department, short: name.slice(0, 2).toUpperCase() }
+    color: input.color, department: input.department, short: name.slice(0, 2).toUpperCase(),
+    provider: input.provider ?? null, permissionMode: input.permissionMode ?? 'restricted' }
 }
 
 export function validStoredAgents(value) {

@@ -13,15 +13,16 @@ const defaultProviders: ProviderInfo[] = [
   { id: 'antigravity', name: 'Antigravity CLI', available: false },
 ];
 
-export function NewTask({ agent, setAgent, workspace, setWorkspace, close, start, busy, demo, provider, setProvider, providers, online, agentBusy, error }: {
+export function NewTask({ agent, setAgent, workspace, setWorkspace, close, start, busy, demo, provider: officeProvider, setProvider: setOfficeProvider, providers, online, agentBusy, error }: {
   agent: AgentId;
   setAgent: (a: AgentId) => void;
   workspace: string;
   setWorkspace: (v: string) => void;
   close: () => void;
-  start: (prompt: string, permissionMode: PermissionMode) => void;
+  start: (prompt: string, permissionMode: PermissionMode, provider: ProviderId) => void;
   busy: boolean;
   demo: boolean;
+  /** The office's last-chosen provider, used when the agent has no default. */
   provider: ProviderId;
   setProvider: (p: ProviderId) => void;
   providers: ProviderInfo[];
@@ -32,14 +33,24 @@ export function NewTask({ agent, setAgent, workspace, setWorkspace, close, start
   const { t: tr } = useLanguage();
   const agents = useAgents();
   const [prompt, setPrompt] = useState('');
-  const [permissionMode, setPermissionMode] = useState<PermissionMode>('restricted');
+  // Each agent's default provider and permissions pre-fill the form; the user can still override them.
+  const defaultsFor = (id: AgentId) => {
+    const profile = agents.find(item => item.id === id);
+    return { provider: profile?.provider || officeProvider, permissionMode: profile?.permissionMode || 'restricted' as PermissionMode };
+  };
+  const [provider, setProvider] = useState<ProviderId>(() => defaultsFor(agent).provider);
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>(() => defaultsFor(agent).permissionMode);
+  const chooseAgent = (id: AgentId) => {
+    const defaults = defaultsFor(id);
+    setAgent(id); setProvider(defaults.provider); setPermissionMode(defaults.permissionMode);
+  };
   const options = providers.length ? providers : defaultProviders;
   const blocked = demo ? '' : !online ? 'API OFFLINE' : !options.some(item => item.available) ? 'No AI provider is available.'
     : !options.some(item => item.id === provider && item.available) ? 'Choose an available AI provider.'
     : agentBusy ? 'Agent is already working.' : !isAbsoluteWorkspace(workspace) ? 'Enter an absolute project path.' : '';
 
   return <Modal close={close} busy={busy} labelledBy="new-mission">
-    <form onSubmit={event => { event.preventDefault(); if (!busy && !blocked && prompt.trim() && agents.some(item => item.id === agent)) start(prompt, permissionMode); }}>
+    <form onSubmit={event => { event.preventDefault(); if (!busy && !blocked && prompt.trim() && agents.some(item => item.id === agent)) start(prompt, permissionMode, provider); }}>
       <div className="modal-title">
         <div><span className="eyebrow"><span /> {tr('A NEW MISSION')}</span><h2 id="new-mission">{tr('Create a task')} <b>✳</b></h2></div>
         <button type="button" onClick={close} disabled={busy} aria-label={tr('Close')}><X size={19}/></button>
@@ -49,12 +60,12 @@ export function NewTask({ agent, setAgent, workspace, setWorkspace, close, start
       <textarea id="prompt" maxLength={10000} required data-autofocus rows={5} placeholder={tr('Example: Analyze this project, identify performance bottlenecks and improve them...')} value={prompt} onChange={event => setPrompt(event.target.value)} aria-describedby={error ? 'task-error' : undefined}/>
       <span id="assign-to" className="field-label">{tr('ASSIGN TO')}</span>
       <div className="modal-agent-list" role="group" aria-labelledby="assign-to">
-        {agents.map(item => <button type="button" aria-pressed={agent === item.id} key={item.id} className={agent === item.id ? 'selected' : ''} onClick={() => setAgent(item.id)}>
+        {agents.map(item => <button type="button" aria-pressed={agent === item.id} key={item.id} className={agent === item.id ? 'selected' : ''} onClick={() => chooseAgent(item.id)}>
           <Avatar id={item.id} size="sm"/>{item.name}{agent === item.id && <Check size={14}/>}
         </button>)}
       </div>
       <label htmlFor="task-provider">{tr('AI provider')}</label>
-      <select id="task-provider" className="language-picker" value={provider} onChange={event => { setProvider(event.target.value as ProviderId); setPermissionMode('restricted'); }}>
+      <select id="task-provider" className="language-picker" value={provider} onChange={event => { const next = event.target.value as ProviderId; setProvider(next); setOfficeProvider(next); setPermissionMode('restricted'); }}>
         {options.map(item => <option key={item.id} value={item.id} disabled={!demo && !item.available}>
           {item.name}{!demo && !item.available ? ` (${tr('NOT FOUND')})` : ''}
         </option>)}

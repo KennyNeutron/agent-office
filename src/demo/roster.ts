@@ -15,7 +15,10 @@ export function validateDemoAgent(value: unknown): value is OfficeAgent {
     validLabel(a.name, 45) && validLabel(a.role, 70) && validLabel(a.specialty, 180) &&
     typeof a.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(a.color) &&
     typeof a.department === 'string' && DEPARTMENTS.some(department => department.id === a.department) &&
-    typeof a.short === 'string' && a.short.length <= 4
+    typeof a.short === 'string' && a.short.length <= 4 &&
+    (a.provider == null || a.provider === 'codex' || a.provider === 'claude' || a.provider === 'antigravity') &&
+    (a.permissionMode == null || a.permissionMode === 'restricted' || a.permissionMode === 'approve-for-me' || a.permissionMode === 'full-access') &&
+    !(a.provider === 'antigravity' && a.permissionMode === 'approve-for-me')
 }
 
 export function loadDemoRoster(): OfficeAgent[] {
@@ -36,5 +39,6 @@ export function saveDemoRoster(agents: OfficeAgent[]) {
 export function makeDemoAgent(input: Omit<OfficeAgent, 'id' | 'short'>, id: string = crypto.randomUUID()): OfficeAgent {
   const name = input.name.trim()
   return { id, name, role: input.role.trim(), specialty: input.specialty.trim(),
-    department: input.department, color: input.color, short: name.slice(0, 2).toUpperCase() }
+    department: input.department, color: input.color, short: name.slice(0, 2).toUpperCase(),
+    provider: input.provider ?? null, permissionMode: input.permissionMode ?? 'restricted' }
 }

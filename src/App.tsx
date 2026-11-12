@@ -213,6 +213,10 @@ export default function App() {
     if (!agents.length) { setView('team'); notice(tr('Add an agent to create tasks'), 'info'); return; }
     selectAgent(agent || resolvedSelected); setModal(true);
   }
+  // Schedules that follow their agent use the agent's current default provider.
+  function scheduleProvider(schedule: OfficeSchedule): ProviderId {
+    return (schedule.useAgentDefaults && agents.find(agent => agent.id === schedule.agentId)?.provider) || schedule.provider;
+  }
   // Simulated run used by Demo mode for both manual and scheduled tasks.
   function launchDemoTask(agentId: AgentId, prompt: string, providerId: ProviderId, schedule?: OfficeSchedule): string {
     const id = 'demo-' + crypto.randomUUID(), stamp = new Date().toISOString();
@@ -229,7 +233,7 @@ export default function App() {
     demoTimers.current.push(window.setTimeout(() => advance(false), 2000), window.setTimeout(() => advance(true), 7000));
     return id;
   }
-  async function start(prompt: string, permissionMode: PermissionMode) {
+  async function start(prompt: string, permissionMode: PermissionMode, provider: ProviderId) {
     if (starting.current || !prompt.trim() || prompt.length > 10000 || !agents.some(agent => agent.id === resolvedSelected)) return;
     const blocked = !demo && (!online ? 'API OFFLINE' : !server?.providers.some(item => item.id === provider && item.available) ? 'Choose an available AI provider.'
       : tasks.some(task => task.agentId === resolvedSelected && task.status === 'running') ? 'Agent is already working.'
@@ -355,7 +359,7 @@ export default function App() {
     if (!schedule) return false;
     if (demo) {
       if (tasks.some(task => task.agentId === schedule.agentId && task.status === 'running' && !bundledDemoIds.has(task.id))) { notice(tr('Agent is already working.'), 'error'); return false; }
-      const taskId = launchDemoTask(schedule.agentId, schedule.prompt, schedule.provider, schedule);
+      const taskId = launchDemoTask(schedule.agentId, schedule.prompt, scheduleProvider(schedule), schedule);
       setDemoSchedules(current => current.map(item => item.id !== id ? item : item.repeat === 'once' ? recordRun(item, { status: 'launched', taskId })
         : { ...item, lastRunAt: new Date().toISOString(), lastTaskId: taskId, lastStatus: 'launched', lastMessage: '' }));
       notice('Scheduled task started · preview only'); return true;
@@ -371,11 +375,11 @@ export default function App() {
     } catch (error) { notice(error instanceof Error ? error.message : tr('Could not start task'), 'error'); return false; }
   }
   // Demo mode simulates the API scheduler in the browser while the page is open.
-  const demoScheduler = useRef({ demo, demoSchedules, tasks, launch: launchDemoTask });
-  useEffect(() => { demoScheduler.current = { demo, demoSchedules, tasks, launch: launchDemoTask }; });
+  const demoScheduler = useRef({ demo, demoSchedules, tasks, launch: launchDemoTask, providerFor: scheduleProvider });
+  useEffect(() => { demoScheduler.current = { demo, demoSchedules, tasks, launch: launchDemoTask, providerFor: scheduleProvider }; });
   useEffect(() => {
     const timer = window.setInterval(() => {
-      const { demo: active, demoSchedules: list, tasks: current, launch } = demoScheduler.current;
+      const { demo: active, demoSchedules: list, tasks: current, launch, providerFor } = demoScheduler.current;
       if (!active) return;
       const updates = new Map<string, OfficeSchedule>();
       // Bundled sample tasks never finish, so only tasks started in this preview count as busy.
@@ -386,7 +390,7 @@ export default function App() {
           continue;
         }
         busy.add(schedule.agentId);
-        updates.set(schedule.id, recordRun(schedule, { status: 'launched', taskId: launch(schedule.agentId, schedule.prompt, schedule.provider, schedule) }));
+        updates.set(schedule.id, recordRun(schedule, { status: 'launched', taskId: launch(schedule.agentId, schedule.prompt, providerFor(schedule), schedule) }));
       }
       if (updates.size) setDemoSchedules(value => value.map(item => updates.get(item.id) ?? item));
     }, 3000);
@@ -413,7 +417,7 @@ export default function App() {
           </div>}
           {view === 'studio' && <Studio tasks={tasks} schedules={schedules} onSchedules={openSchedules} onKnowledge={() => setKnowledgeOpen(true)} selected={inspectedAgent} setSelected={selectAgent} selectedTask={selectedTask} setSelectedTask={setSelectedTask} onNew={() => showNew()} demo={demo} ready={cliReady}/>}
           {view === 'tasks' && <TaskList tasks={tasks} onSelect={(id, taskId) => { setSelected(id); setSelectedTask(taskId); setView('studio'); }} cancel={cancel} canCancel={demo || online}/>}
-          {view === 'team' && <Team tasks={tasks} onTask={showNew} onSave={saveAgent} onDelete={deleteAgent} connected={demo || online} demo={demo}/>}
+          {view === 'team' && <Team tasks={tasks} providers={server?.providers || []} onTask={showNew} onSave={saveAgent} onDelete={deleteAgent} connected={demo || online} demo={demo}/>}
           {view === 'settings' && <Settings workspace={workspace} setWorkspace={editWorkspace} demo={demo} setDemo={changeMode} server={server} online={online} publicPreview={PUBLIC_DEMO}/>}
         </main>
         <footer><span>© 2026 Agent Office <b>✳</b>{' ' + tr('Made for builders')}</span><span>v0.4.0 <i>·</i>{' ' + tr('Open source')}</span></footer>
