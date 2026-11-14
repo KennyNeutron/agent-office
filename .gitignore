@@ -41,3 +41,9 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+
+# Desktop (Tauri) build output and staged sidecar/resources
+src-tauri/target/
+src-tauri/gen/
+src-tauri/binaries/
+src-tauri/resources/

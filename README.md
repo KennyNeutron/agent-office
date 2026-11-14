@@ -40,6 +40,16 @@ Options: `agent-office --no-open` (start without opening your browser), `agent-o
 
 **Inside VS Code:** install the companion extension `.vsix` from [GitHub Releases](https://github.com/Munizada/agent-office/releases), then use **Ctrl+Shift+P → Agent Office: Open 3D Office**. The office appears in a VS Code tab and automatically uses the open project folder. See [VS Code extension guide](vscode-extension/README.md). Other editors can use the browser interface launched from their integrated terminals.
 
+**Desktop app (Tauri):** Agent Office also runs as a standalone desktop window, with no terminal or browser to keep open. The app bundles its own Node.js runtime and starts the local office on a free `127.0.0.1` port when it opens; closing the window stops the office and any running agent tasks. Every setting (theme, appearance, selected agent and provider, live/demo mode), the task history, agents, schedules, chats, the office project folder and the **team knowledge base** are saved on this computer in the app's data folder:
+
+| OS | Data folder |
+| --- | --- |
+| Linux | `~/.local/share/dev.agentoffice.desktop/` |
+| macOS | `~/Library/Application Support/dev.agentoffice.desktop/` |
+| Windows | `%APPDATA%\dev.agentoffice.desktop\` |
+
+The office log is in its `logs/office.log`. Running from source with `npm run dev:all`, `npm start` or `npm run server` uses **the same data folder**, so development and the installed app share settings, history and the knowledge base (set `AGENT_OFFICE_DATA_DIR` to use another folder). Only one office can use a data folder at a time: close the app before starting a terminal run, and vice versa. The desktop app opens in Live mode and uses your home folder until you choose a project folder in the top bar. It still drives the Codex, Claude Code and Antigravity CLIs installed on your computer. On Linux and macOS it reads your login shell's `PATH` to find them, so CLIs installed through nvm, Homebrew or `~/.local/bin` are detected. To build the installers, see [Development](docs/DEVELOPMENT.md#desktop-app-tauri).
+
 **Linux/macOS or development:** Run from this folder:
 
 ```bash
@@ -145,6 +155,8 @@ npm run server
 | `npm run dev` | Local front end at 127.0.0.1:5173 |
 | `agent-office` | Run the globally installed office for the current project |
 | `agent-office --no-open --port 4400` | Run headlessly on a different local port |
+| `npm run desktop:dev` | Build and open the desktop app (Tauri) in development |
+| `npm run desktop:build` | Build desktop installers in `src-tauri/target/release/bundle/` |
 | `npm run package:vscode` | Build VS Code VSIX installer in `work/` |
 | `npm run dev:all` | Start both front end and local API in one terminal |
 | `npm start` | Serve built UI and local API at 127.0.0.1:4300 (run `npm run build` first) |
@@ -169,7 +181,7 @@ CLI detection checks whether a command is installed, **not whether you are signe
 
 `smoke:live` creates disposable test directories inside `.local/`; it runs two real Codex sessions, so it requires an authenticated CLI and can incur usage costs. Do not run it as part of an untrusted CI workflow.
 
-Task prompts, statuses, phase updates, recent events (up to 35 per task) and short output excerpts are saved locally in `.local/tasks.json`, and editable agent profiles in `.local/agents.json`, during source development. Globally installed CLI data lives in a folder specific to each workspace under your user state directory (`%LOCALAPPDATA%\\AgentOffice` on Windows, `~/.local/state/agent-office` on Linux, etc.). This prevents separate project windows from overwriting each other's history and roster. These files are not committed. Avoid putting credentials in task instructions. The API has no user authentication and must **never** be exposed publicly on a network.
+Task prompts, statuses, phase updates, recent events (up to 35 per task) and short output excerpts are saved locally in `tasks.json`, and editable agent profiles in `agents.json`. Source development (`npm run dev:all`, `npm start`, `npm run server`) uses the desktop app's data folder; running `node server/index.mjs` directly without `AGENT_OFFICE_DATA_DIR` still uses `.local/`. Globally installed CLI data lives in a folder specific to each workspace under your user state directory (`%LOCALAPPDATA%\\AgentOffice` on Windows, `~/.local/state/agent-office` on Linux, etc.). This prevents separate project windows from overwriting each other's history and roster. The desktop app keeps all of its data, including interface settings (`settings.json`) and the knowledge base (`knowledge.json`), in its own data folder listed under *Quick start*. These files are not committed. Avoid putting credentials in task instructions. The API has no user authentication and must **never** be exposed publicly on a network.
 
 ## Roadmap
 

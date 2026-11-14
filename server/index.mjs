@@ -1,6 +1,6 @@
 import express from 'express'
 import { spawn } from 'node:child_process'
-import { existsSync, realpathSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { mkdir, open, readFile, rename, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -25,6 +25,11 @@ const KNOWLEDGE_STORE = join(dirname(STORE), 'knowledge.json')
 const KNOWLEDGE_MCP = join(HERE, 'knowledge-mcp.mjs')
 const CHAT_STORE = join(dirname(STORE), 'chats.json')
 const OFFICE_STORE = join(dirname(STORE), 'office.json')
+// Interface preferences (theme, appearance, selected agent…) mirrored from the browser.
+const SETTINGS_STORE = join(dirname(STORE), 'settings.json')
+const SETTING_KEY = /^agent-office-[A-Za-z0-9._-]{1,80}$/
+const MAX_SETTINGS_BYTES = 512 * 1024
+const DESKTOP = process.env.AGENT_OFFICE_DESKTOP === '1'
 const MAX_RECENT_PROJECTS = 8
 // A chat reply that takes longer than this is stopped.
 const CHAT_TIMEOUT_MS = Math.max(1000, Number(process.env.AGENT_OFFICE_CHAT_TIMEOUT_MS) || 10 * 60_000)
@@ -50,6 +55,9 @@ let knowledgeVersion = 0
 let office = { projectDirectory: null, recentProjects: [] }
 let officePersistChain = Promise.resolve()
 let officeReadable = true
+let settings = {}
+let settingsPersistChain = Promise.resolve()
+let settingsReadable = true
 const launchDirectory = () => process.env.AGENT_OFFICE_WORKSPACE || ROOT
 const officeProject = () => office.projectDirectory || launchDirectory()
 // Conversations by agent id, plus the reply currently being generated for each agent.
@@ -69,6 +77,36 @@ let agentsReadable = true
 let historyWriteError = false
 let shuttingDown = false
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) throw new Error('Port must be between 1 and 65535.')
+
+// One office per data folder: two would each overwrite the other's stores. The
+// desktop app and terminal runs share a folder, so the second one stops here.
+const LOCK_FILE = join(dirname(STORE), 'office.lock')
+function claimDataFolder() {
+  mkdirSync(dirname(LOCK_FILE), { recursive: true })
+  const mine = JSON.stringify({ pid: process.pid, port: PORT, desktop: DESKTOP })
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { writeFileSync(LOCK_FILE, mine, { flag: 'wx', mode: 0o600 }); break }
+    catch (error) {
+      if (error.code !== 'EEXIST' || attempt) throw error
+      let owner = null
+      try { owner = JSON.parse(readFileSync(LOCK_FILE, 'utf8')) } catch { /* Unreadable: treat as stale. */ }
+      let alive = false
+      if (Number.isInteger(owner?.pid) && owner.pid !== process.pid) {
+        try { process.kill(owner.pid, 0); alive = true } catch (probe) { alive = probe.code === 'EPERM' }
+      }
+      if (alive) {
+        const where = owner.desktop ? 'the Agent Office desktop app' : `another Agent Office (http://127.0.0.1:${owner.port}/)`
+        throw new Error(`${where} is already using ${dirname(LOCK_FILE)} (process ${owner.pid}). Close it first, or set AGENT_OFFICE_DATA_DIR to another folder.`)
+      }
+      try { unlinkSync(LOCK_FILE) } catch { /* Removed meanwhile. */ }
+    }
+  }
+  process.on('exit', () => {
+    try { if (JSON.parse(readFileSync(LOCK_FILE, 'utf8')).pid === process.pid) unlinkSync(LOCK_FILE) } catch { /* Already gone. */ }
+  })
+}
+try { claimDataFolder() }
+catch (error) { console.error('Could not start Agent Office:', error.message); process.exit(1) }
 
 const providers = discoverProviders()
 const app = express()
@@ -369,6 +407,43 @@ app.put('/api/office/project', async (req, res) => {
       recentProjects: canonical ? [canonical, ...current.recentProjects.filter(item => item !== canonical)].slice(0, MAX_RECENT_PROJECTS) : current.recentProjects }))
     res.json({ office, defaultWorkspace: officeProject() })
   } catch { res.status(500).json({ error: 'Could not save office settings.' }) }
+})
+
+// ---- Interface settings -------------------------------------------------------
+// The browser keeps its preferences in localStorage, which a desktop webview ties to a
+// random port. Mirroring them here keeps them in the data directory on this PC.
+async function loadSettings() {
+  try {
+    const stored = JSON.parse(await readFile(SETTINGS_STORE, 'utf8'))
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored) ||
+      Object.entries(stored).some(([key, value]) => !SETTING_KEY.test(key) || typeof value !== 'string')) throw new Error('Invalid settings.json; the original file was preserved.')
+    settings = stored
+  } catch (error) {
+    if (error.code !== 'ENOENT') { settingsReadable = false; console.error('Could not load settings:', error.message) }
+  }
+}
+app.get('/api/settings', (_req, res) => res.json({ settings, desktop: DESKTOP }))
+// Body: { values: { "agent-office-…": "text" | null } }. null removes a setting.
+app.put('/api/settings', async (req, res) => {
+  const values = req.body?.values
+  if (!values || typeof values !== 'object' || Array.isArray(values) ||
+    Object.entries(values).some(([key, value]) => !SETTING_KEY.test(key) || (value !== null && typeof value !== 'string'))) return res.status(400).json({ error: 'Invalid settings.' })
+  if (!settingsReadable) return res.status(503).json({ error: 'Settings are unreadable. Preserve and repair settings.json first.' })
+  const operation = settingsPersistChain.then(async () => {
+    const next = { ...settings }
+    for (const [key, value] of Object.entries(values)) { if (value === null) delete next[key]; else next[key] = value }
+    const contents = JSON.stringify(next, null, 2)
+    if (Buffer.byteLength(contents) > MAX_SETTINGS_BYTES) return false
+    await atomicWrite(SETTINGS_STORE, contents)
+    settings = next
+    return true
+  })
+  settingsPersistChain = operation.then(() => {}, error => console.error('Could not save settings:', error.message))
+  try {
+    if (await operation) res.json({ ok: true })
+    else res.status(413).json({ error: 'Settings are too large.' })
+  }
+  catch { res.status(500).json({ error: 'Could not save settings.' }) }
 })
 
 // ---- Agent chat -------------------------------------------------------------
@@ -837,7 +912,7 @@ app.post('/api/tasks/:id/cancel', async (req, res) => {
   }
 })
 
-await Promise.all([loadHistory(), loadAgents(), loadSchedules(), loadKnowledge(), loadChats(), loadOffice()])
+await Promise.all([loadHistory(), loadAgents(), loadSchedules(), loadKnowledge(), loadChats(), loadOffice(), loadSettings()])
 if (existsSync(join(ROOT, 'dist', 'index.html'))) {
   app.use(express.static(join(ROOT, 'dist')))
   app.get('/', (_req, res) => res.sendFile(join(ROOT, 'dist', 'index.html')))
@@ -887,6 +962,7 @@ export function shutdown() {
     await agentsPersistChain
     await chatsPersistChain
     await officePersistChain
+    await settingsPersistChain
     await schedulesPersistChain
     await knowledgePersistChain
     if (historyReadable) await persistHistory().catch(() => { process.exitCode = 1 })
@@ -906,4 +982,14 @@ if (process.channel) {
     }
   })
   process.on('disconnect', () => { void shutdown().catch(error => console.error(error.message)) })
+}
+// The desktop app holds the write end of stdin. When the app quits (or crashes), the
+// pipe closes, so the office stops its agent processes and saves state on every OS.
+if (DESKTOP) {
+  process.stdin.on('error', () => {})
+  process.stdin.on('end', () => {
+    void shutdown().catch(error => { console.error('Office shutdown failed:', error.message); process.exitCode = 1 })
+      .finally(() => process.exit())
+  })
+  process.stdin.resume()
 }

@@ -1,11 +1,13 @@
 import { spawn } from 'node:child_process'
 import { resolve } from 'node:path'
+import { applySharedDataDir } from './shared-data.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 const processes = [
   ['API', resolve(root, 'server/index.mjs')],
   ['Web', resolve(root, 'node_modules/vite/bin/vite.js')],
 ]
+console.log(`Agent Office data: ${applySharedDataDir()}`)
 const children = []
 let shuttingDown = false
 

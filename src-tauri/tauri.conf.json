@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Agent Office",
+  "mainBinaryName": "agent-office",
+  "version": "../package.json",
+  "identifier": "dev.agentoffice.desktop",
+  "build": {
+    "frontendDist": "loading",
+    "beforeDevCommand": { "script": "npm run desktop:prepare", "wait": true },
+    "beforeBuildCommand": "npm run desktop:prepare"
+  },
+  "app": {
+    "windows": [],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "A live 3D mission control for coding agents",
+    "longDescription": "Agent Office runs a local office for Codex CLI, Claude Code and Antigravity CLI agents. Settings, task history, chats and the team knowledge base are stored on this computer.",
+    "license": "MIT",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": ["binaries/agent-office-node"],
+    "resources": { "resources/app/": "app/" }
+  }
+}

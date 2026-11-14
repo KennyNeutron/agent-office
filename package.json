@@ -27,8 +27,8 @@
     "prepack": "npm run build",
     "dev": "vite --host 127.0.0.1",
     "dev:all": "node scripts/dev.mjs",
-    "server": "node server/index.mjs",
-    "start": "node server/index.mjs",
+    "server": "node scripts/serve.mjs",
+    "start": "node scripts/serve.mjs",
     "build": "tsc -b && vite build",
     "build:demo": "tsc -b && vite build --mode public-demo",
     "lint": "oxlint",
@@ -45,7 +45,10 @@
     "check:public": "node scripts/check-public.mjs",
     "verify:public": "npm run check:public && npm run lint && npm run test:behavior && npm run test:ui && npm run build && npm run check:server",
     "smoke:floor": "npm run build && node scripts/smoke-corporate-floor.mjs",
-    "test:ui": "node scripts/smoke-browser.mjs --unit"
+    "test:ui": "node scripts/smoke-browser.mjs --unit",
+    "desktop:prepare": "npm run build && node scripts/prepare-desktop.mjs",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build"
   },
   "dependencies": {
     "express": "^5.3.0"
@@ -53,17 +56,18 @@
   "devDependencies": {
     "@react-three/drei": "^10.7.9",
     "@react-three/fiber": "^9.8.1",
-    "lucide-react": "^1.55.0",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "three": "^0.186.1",
+    "@tauri-apps/cli": "2.12.4",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
+    "lucide-react": "^1.55.0",
     "oxlint": "^1.81.0",
     "pngjs": "^7.0.0",
     "puppeteer-core": "^25.13.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "three": "^0.186.1",
     "typescript": "~6.0.2",
     "vite": "^8.3.0"
   }

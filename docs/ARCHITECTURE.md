@@ -72,6 +72,8 @@ In Demo mode the same module drives an in-browser scheduler that stores schedule
 | `server/providers.mjs` | CLI adapters, binary discovery and shared-folder detection |
 | `server/schedules.mjs` | Schedule validation and next-run calculation, shared by the API and the browser demo |
 | `bin/agent-office.mjs` | Globally installed terminal launcher with workspace selection |
+| `src-tauri/` | Tauri desktop shell: starts the office on a bundled Node.js sidecar and keeps its data in the app data folder |
+| `src/settingsSync.ts` | Mirrors interface preferences from `localStorage` to the server's `settings.json` |
 | `vscode-extension/` | VS Code companion that launches CLI and opens a Simple Browser tab |
 | `START-WINDOWS.cmd` | One-click Windows startup and first-run dependency installation |
 | `scripts/` | Dev launcher, validation and smoke tests |

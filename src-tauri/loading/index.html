@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Office</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #f5f4fb; --fg: #24213a; --muted: #6b6785; --accent: #8277f5; --error: #c2364a; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #15131f; --fg: #ece9ff; --muted: #9c97ba; --error: #ff7a8c; } }
+    html, body { height: 100%; margin: 0; }
+    body { display: grid; place-items: center; background: var(--bg); color: var(--fg);
+      font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 34rem; padding: 24px; text-align: center; }
+    .spinner { width: 36px; height: 36px; margin: 0 auto 18px; border-radius: 50%;
+      border: 4px solid color-mix(in srgb, var(--accent) 25%, transparent); border-top-color: var(--accent);
+      animation: spin 0.9s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    h1 { font-size: 18px; margin: 0 0 6px; }
+    p { margin: 0; color: var(--muted); }
+    #error { display: none; }
+    body.failed .spinner, body.failed #status { display: none; }
+    body.failed #error { display: block; }
+    #error h1 { color: var(--error); }
+    code { font-size: 13px; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="spinner" aria-hidden="true"></div>
+    <div id="status"><h1>Starting Agent Office…</h1><p>Opening the local office on this computer.</p></div>
+    <div id="error" role="alert"><h1>Agent Office could not start</h1><p id="message"></p></div>
+  </main>
+  <script>
+    // Called by the desktop shell when the local office fails to start.
+    window.showStartupError = function (message) {
+      document.getElementById('message').textContent = message;
+      document.body.classList.add('failed');
+    };
+  </script>
+</body>
+</html>

@@ -65,6 +65,28 @@ Upgrade the CLI and VS Code companion together for v0.4. The companion now verif
 
 For browser smoke tests, set `CHROME_BIN` if Chrome is not installed in the default location. The Demo test writes an ignored screenshot into `screenshots/`. The live UI test requires **both services running** and an authenticated Codex CLI; it writes only to a fresh ignored `.local/live-ui-smoke-*` folder and cancels its test task if validation fails. These live tests are opt-in and are never run in CI.
 
+## Desktop app (Tauri)
+
+The desktop app in `src-tauri/` is a thin Tauri 2 shell around the same office. It does not change how the office works: on launch it starts `server/index.mjs` on a bundled Node.js runtime (the `agent-office-node` sidecar), bound to `127.0.0.1` on a free port, shows a loading page, then opens the office from that port.
+
+Extra requirements: [Rust](https://rustup.rs/) and the [Tauri system prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS (on Debian/Ubuntu: `libwebkit2gtk-4.1-dev`, `build-essential`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`).
+
+```bash
+npm run desktop:dev     # build, stage and open a development window
+npm run desktop:build   # release installers in src-tauri/target/release/bundle/
+```
+
+Both commands first run `npm run desktop:prepare`. That builds the UI, then `scripts/prepare-desktop.mjs` stages `server/`, `dist/` and the production dependencies in `src-tauri/resources/app/`, and copies the Node.js running the script to `src-tauri/binaries/agent-office-node-<target triple>`. Set `AGENT_OFFICE_NODE_BINARY` to bundle a different Node build. Both folders are generated and ignored by Git. Installers are built for the OS they run on (Linux `.deb`/`.AppImage`/`.rpm`, macOS `.app`/`.dmg`, Windows `.msi`/`.exe`); build each one on its own OS or in CI.
+
+How the shell keeps data on the computer:
+
+- `AGENT_OFFICE_DATA_DIR` points at the app data folder (`~/.local/share/dev.agentoffice.desktop` on Linux), so tasks, agents, schedules, chats, the office project and `knowledge.json` are stored there.
+- Browser preferences normally live only in `localStorage`, which the webview ties to the launch port. With `AGENT_OFFICE_DESKTOP=1` the server reports `desktop: true` from `GET /api/settings`, and `src/settingsSync.ts` mirrors every `agent-office-*` key to `settings.json` through `PUT /api/settings`. Saved settings are loaded into `localStorage` before the first render. This also works in the browser version.
+- The shell holds the office's stdin. When the app quits or is killed, the pipe closes and the office stops its agent processes and saves its stores before exiting.
+- Source runs share that folder: `scripts/dev.mjs` and `scripts/serve.mjs` (`npm run dev:all`, `npm start`, `npm run server`) set `AGENT_OFFICE_DATA_DIR` to it unless it is already set (see `scripts/shared-data.mjs`). Use `AGENT_OFFICE_DATA_DIR=.local npm run dev:all` for throwaway data.
+- The server takes `office.lock` in its data folder, so a second office on the same folder (the app plus a terminal run) refuses to start and says which one holds it. A lock left by a crashed office is replaced automatically.
+- A second launch focuses the open window. Links to other sites open in the default browser.
+
 ## Regular development and GitHub sync
 
 Enable hooks in each clone with git config core.hooksPath .githooks. The Git pre-push hook runs `npm run verify:public` when `core.hooksPath` is set to `.githooks`. This prevents an ordinary Git push if checks or tracked-secret screening fail. GitHub Actions repeats checks on pushes and pull requests.
@@ -77,6 +99,8 @@ A failed check must be fixed before pushing. Never use `--no-verify` to bypass s
 
 - **Blank 3D scene**: enable WebGL/hardware acceleration, update browser/GPU drivers, test Chrome.
 - **API offline**: run `npm run dev:all` and check port 4300 is unused.
+- **Desktop app shows a blank window on Linux** (some NVIDIA/Wayland setups): start it with `WEBKIT_DISABLE_DMABUF_RENDERER=1`.
+- **Desktop app does not start**: read `logs/office.log` in the app data folder.
 - **CLI missing**: install/login to the selected CLI, ensure it is on PATH or set its matching `_BIN` environment variable, and restart the API.
 - **Codex Web GPT**: selecting its repository folder creates fresh independent tasks; it does not mirror existing Codex Web GPT conversations. Avoid simultaneous edits through both apps.
 - **Task fails to start**: check absolute workspace path, write permissions, CLI configuration and the error shown in Activity.
