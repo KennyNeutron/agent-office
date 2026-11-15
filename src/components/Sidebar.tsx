@@ -1,4 +1,4 @@
-import { Activity, ArrowRight, LayoutDashboard, Layers3, MoreHorizontal, Settings2, Sparkles, Users } from 'lucide-react';
+import { Activity, ArrowRight, LayoutDashboard, Layers3, MoreHorizontal, Puzzle, Settings2, Sparkles, Users } from 'lucide-react';
 import { displayAgentText, useAgents } from '../agents';
 import { useLanguage } from '../locales/i18n';
 import type { View } from '../views/types';
@@ -15,7 +15,7 @@ export function Sidebar({ view, setView, onNew }: {
         id: View;
         label: string;
         icon: typeof Activity;
-    }[] = [{ id: 'studio', label: 'Office studio', icon: LayoutDashboard }, { id: 'tasks', label: 'Activity & tasks', icon: Activity }, { id: 'team', label: 'Agent team', icon: Users }];
+    }[] = [{ id: 'studio', label: 'Office studio', icon: LayoutDashboard }, { id: 'tasks', label: 'Activity & tasks', icon: Activity }, { id: 'team', label: 'Agent team', icon: Users }, { id: 'tools', label: 'Tools & plugins', icon: Puzzle }];
     return <aside className="sidebar"><div className="brand"><span className="brand-logo"><Layers3 size={22}/></span><span><strong>agent<span>office</span></strong><small>{tr("MISSION CONTROL")}</small></span></div>
     <div className="side-label">{tr("WORKSPACE")}</div><nav aria-label={tr("WORKSPACE")}>{nav.map(({ id, label, icon: Icon }) => <button key={id} className={`nav-item ${view === id ? 'active' : ''}`} aria-current={view === id ? "page" : undefined} onClick={() => setView(id)} title={tr(label)} aria-label={tr(label)}><Icon size={18}/>{tr(label)}{view === id && <span className="nav-dot"/>}</button>)}</nav>
     <div className="side-label team-label">{tr("YOUR TEAM") + " "}<span>{agents.length}</span></div><div className="side-team">{agents.slice(0, 12).map(agent => <button key={agent.id} onClick={() => setView('team')}><Avatar id={agent.id} size="sm"/><span><strong>{agent.name}</strong><small>{displayAgentText(agent, 'role', tr)}</small></span><i /></button>)}{agents.length > 12 && <button onClick={() => setView('team')}>+{agents.length - 12} {tr('agents')}</button>}</div>

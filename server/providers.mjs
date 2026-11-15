@@ -104,9 +104,29 @@ function knowledgeMcpArgs(id, mcp) {
   return ['-c', `mcp_servers.agent_office.command=${JSON.stringify(mcp.command)}`, '-c', `mcp_servers.agent_office.args=${JSON.stringify(mcp.args)}`]
 }
 
-export function providerCommand(provider, workspace, prompt, permissionMode, mcp = null) {
+/**
+ * Arguments for the office-managed MCP servers of one run (`servers` from
+ * runMcpWiring in mcp.mjs): a private config file for Claude Code, `-c` overrides
+ * for Codex. Claude's auto-approved servers join the knowledge tools' allow list.
+ */
+export function userMcpArgs(id, servers, knowledgeArgs = []) {
+  if (!servers) return knowledgeArgs
+  if (id === 'claude' && servers.configFile) {
+    const allowed = knowledgeArgs.indexOf('--allowedTools')
+    const args = [...knowledgeArgs]
+    if (servers.allowedTools.length) {
+      if (allowed >= 0) args[allowed + 1] += ',' + servers.allowedTools.join(',')
+      else args.push('--allowedTools', servers.allowedTools.join(','))
+    }
+    return [...args, '--mcp-config', servers.configFile]
+  }
+  if (id === 'codex') return [...knowledgeArgs, ...servers.codexArgs]
+  return knowledgeArgs
+}
+
+export function providerCommand(provider, workspace, prompt, permissionMode, mcp = null, servers = null) {
   const args = launchArgs(provider.id, workspace, permissionMode)
-  const extra = knowledgeMcpArgs(provider.id, mcp)
+  const extra = userMcpArgs(provider.id, servers, knowledgeMcpArgs(provider.id, mcp))
   // Codex options follow the "exec" subcommand; Claude's go before its trailing flags.
   if (extra.length) args.splice(provider.id === 'codex' ? 1 : args.indexOf('--permission-prompts'), 0, ...extra)
   // agy takes the prompt as a flag value; the "=" form keeps a prompt starting with "-" from parsing as a flag.

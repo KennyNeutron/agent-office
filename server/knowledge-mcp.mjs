@@ -11,7 +11,7 @@ const context = { workspace: option('workspace'), taskId: option('task') || null
 const VERSION = '1.0.0'
 
 const TOOLS = [
-  { name: 'search_knowledge', description: 'Search the team knowledge base for this project: durable notes (decisions, conventions, gotchas, how things work) saved by teammates. Returns the best matching notes with ids.',
+  { name: 'search_knowledge', description: 'Search the Agent Office knowledge base: durable notes (decisions, conventions, gotchas, how things work) saved from every project the office has worked on. Notes from the current project rank first; notes from other projects name their project, and their file paths belong to that project. Returns the best matching notes with ids.',
     inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'Keywords, e.g. "payment retry webhook"' }, limit: { type: 'number', description: 'Maximum results (1-10, default 5)' } }, required: ['query'] } },
   { name: 'read_note', description: 'Read one team knowledge note in full by its id (from search_knowledge).',
     inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
@@ -27,7 +27,9 @@ async function api(path, init = {}) {
   if (!response.ok) throw new Error(body.error || `Agent Office returned ${response.status}.`)
   return body
 }
-const format = note => `# ${note.title}\nid: ${note.id}${note.tags.length ? `\ntags: ${note.tags.join(', ')}` : ''}${note.files.length ? `\nfiles: ${note.files.join(', ')}` : ''}\nupdated: ${note.updatedAt}\n\n${note.body}`
+const project = note => note.workspace ? note.workspace.replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) : ''
+const origin = note => note.workspace && note.workspace !== context.workspace ? ` (from project "${project(note)}")` : ''
+const format = note => `# ${note.title}\nid: ${note.id}${note.workspace ? `\nproject: ${note.workspace}` : ''}${note.tags.length ? `\ntags: ${note.tags.join(', ')}` : ''}${note.files.length ? `\nfiles: ${note.files.join(', ')}` : ''}\nupdated: ${note.updatedAt}\n\n${note.body}`
 
 async function call(name, args = {}) {
   if (name === 'search_knowledge') {
@@ -35,7 +37,7 @@ async function call(name, args = {}) {
     if (context.taskId) params.set('task', context.taskId)
     const { results } = await api(`/api/knowledge/search?${params}`)
     if (!results.length) return 'No team notes match. Nothing has been recorded about this yet.'
-    return results.map(({ note }) => { const body = note.body.replace(/\s+/g, ' '); return `- [${note.id}] ${note.title}: ${body.length > 300 ? body.slice(0, 300) + '…' : body}` }).join('\n')
+    return results.map(({ note }) => { const body = note.body.replace(/\s+/g, ' '); return `- [${note.id}] ${note.title}${origin(note)}: ${body.length > 300 ? body.slice(0, 300) + '…' : body}` }).join('\n')
   }
   if (name === 'read_note') {
     const params = new URLSearchParams({ workspace: context.workspace })

@@ -9,7 +9,10 @@ const NOTE_DEFAULT = '#8b82ff', TAG = '#e0a33a', FILE = '#3ea7a0';
 const LINK_LENGTH = { tag: 115, file: 130 } as const;
 const MIN_SCALE = .35, MAX_SCALE = 5;
 
-const radius = (node: KnowledgeGraphNode) => node.kind === 'note' ? 9 + Math.min(8, node.degree * 1.2) : 5 + Math.min(7, node.degree * 1.4);
+const radius = (node: KnowledgeGraphNode) => node.kind === 'note' ? 5 + Math.min(5, node.degree * .8) : 3 + Math.min(4, node.degree * .9);
+const ENTRANCE_MS = 1100, STAGGER_MS = 450;
+const easeOutBack = (t: number) => 1 + 2.2 * (t - 1) ** 3 + 1.2 * (t - 1) ** 2;
+const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 const truncate = (text: string, max: number) => text.length > max ? text.slice(0, max - 1) + '…' : text;
 
 /**
@@ -46,9 +49,33 @@ export function KnowledgeGraphView({ notes, matches, selectedNote, onSelectNote 
   const svg = useRef<SVGSVGElement>(null);
   const drag = useRef<{ x: number; y: number; moved: boolean; node: string | null } | null>(null);
 
-  // A new graph (notes added or removed) starts from the fitted view.
+  // A new graph (notes added or removed) starts from the fitted view and plays the entrance again.
   const [graphKey, setGraphKey] = useState(graph);
-  if (graphKey !== graph) { setGraphKey(graph); setView({ scale: 1, x: 0, y: 0 }); setFocus(null); }
+  const [elapsed, setElapsed] = useState(0);
+  if (graphKey !== graph) { setGraphKey(graph); setView({ scale: 1, x: 0, y: 0 }); setFocus(null); setElapsed(0); }
+  useEffect(() => {
+    if (reducedMotion()) { const id = setTimeout(() => setElapsed(ENTRANCE_MS + STAGGER_MS), 0); return () => clearTimeout(id); }
+    let frame = 0;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const time = now - start;
+      setElapsed(Math.min(time, ENTRANCE_MS + STAGGER_MS));
+      if (time < ENTRANCE_MS + STAGGER_MS) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [graph]);
+  // Nodes burst out from the centre, the best-connected first, and settle into place.
+  const order = useMemo(() => new Map([...graph.nodes].sort((a, b) => b.degree - a.degree).map((node, i, all) => [node.id, all.length > 1 ? i / (all.length - 1) : 0])), [graph]);
+  const centre = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+  const settling = elapsed < ENTRANCE_MS + STAGGER_MS;
+  const progress = (id: string) => Math.min(1, Math.max(0, (elapsed - (order.get(id) ?? 0) * STAGGER_MS) / (ENTRANCE_MS - 200)));
+  const at = (id: string) => {
+    const point = points.get(id)!;
+    if (!settling) return point;
+    const t = easeOutBack(progress(id));
+    return { x: centre.x + (point.x - centre.x) * t, y: centre.y + (point.y - centre.y) * t };
+  };
 
   const toGraph = (clientX: number, clientY: number) => {
     const matrix = svg.current?.getScreenCTM();
@@ -131,22 +158,26 @@ export function KnowledgeGraphView({ notes, matches, selectedNote, onSelectNote 
       <g transform={`translate(${view.x} ${view.y}) scale(${view.scale})`}>
         <g className="kg-links">
           {graph.links.map(link => {
-            const a = points.get(link.source)!, b = points.get(link.target)!;
+            const a = at(link.source), b = at(link.target);
             const on = active && (link.source === active || link.target === active);
             return <line key={`${link.source}>${link.target}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-              className={on ? 'on' : dim(link.source) || dim(link.target) ? 'dim' : ''} strokeWidth={(on ? 1.8 : 1) / Math.sqrt(view.scale)}/>;
+              className={on ? 'on' : dim(link.source) || dim(link.target) ? 'dim' : ''}
+              strokeOpacity={settling ? Math.min(progress(link.source), progress(link.target)) : undefined} strokeWidth={(on ? 1.8 : 1) / Math.sqrt(view.scale)}/>;
           })}
         </g>
-        {graph.nodes.map(node => {
-          const { x, y } = points.get(node.id)!, r = radius(node);
+        {graph.nodes.map((node, index) => {
+          const { x, y } = at(node.id), r = radius(node), shown = settling ? Math.min(1, progress(node.id) * 1.6) : 1;
           const classes = ['kg-node', `kg-${node.kind}`, dim(node.id) ? 'dim' : '', node.id === selectedId ? 'selected' : '', node.status === 'draft' ? 'draft' : ''].filter(Boolean).join(' ');
           return <g key={node.id} data-node={node.id} className={classes} transform={`translate(${x} ${y})`}
             onPointerEnter={() => setHovered(node.id)} onPointerLeave={() => setHovered(current => current === node.id ? null : current)}>
             <title>{node.kind === 'file' ? node.path : node.label}</title>
-            {node.kind === 'file'
-              ? <rect x={-r} y={-r} width={r * 2} height={r * 2} rx={r * .35} fill={colour(node)}/>
-              : <circle r={r} fill={colour(node)}/>}
-            {labelled.has(node.id) && <text y={r + labelSize + 2} fontSize={labelSize} textAnchor="middle">{labelText(node)}</text>}
+            <g className="kg-float" opacity={shown} style={{ animationDelay: `${-(index * 0.77) % 6}s`, animationDuration: `${5 + (index % 5) * .6}s` }}>
+              {node.id === selectedId && <circle className="kg-pulse" r={r} fill="none" stroke={colour(node)}/>}
+              {node.kind === 'file'
+                ? <rect x={-r} y={-r} width={r * 2} height={r * 2} rx={r * .35} fill={colour(node)}/>
+                : <circle r={r} fill={colour(node)}/>}
+              {labelled.has(node.id) && !settling && <text className="kg-label" y={r + labelSize + 2} fontSize={labelSize} textAnchor="middle">{labelText(node)}</text>}
+            </g>
           </g>;
         })}
       </g>

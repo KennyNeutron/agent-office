@@ -75,8 +75,11 @@ export function chatArgs(id, workspace) {
   throw new Error('Unknown AI provider.')
 }
 
-export function chatCommand(provider, workspace, prompt) {
+/** `extra`: MCP arguments for this chat, from userMcpArgs in providers.mjs. */
+export function chatCommand(provider, workspace, prompt, extra = []) {
   const args = chatArgs(provider.id, workspace)
+  // Codex options follow "exec"; Claude's go before its trailing flags.
+  if (extra.length) args.splice(provider.id === 'codex' ? 1 : args.indexOf('--permission-prompts'), 0, ...extra)
   if (provider.id === 'antigravity') args.unshift(`--print=${prompt}`)
   const script = /\.[cm]?js$/i.test(provider.bin)
   return { command: script ? process.execPath : provider.bin, args: script ? [provider.bin, ...args] : args,

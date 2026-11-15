@@ -79,7 +79,7 @@ export interface ChatMessage { id: string; role: 'user' | 'agent'; text: string;
 export interface ChatStatus { version: number; pending: boolean; count: number }
 /** The office-wide project folder. `projectDirectory` is null while the office uses the folder it was launched from. */
 export interface OfficeSettings { projectDirectory: string | null; recentProjects: string[]; launchDirectory: string }
-export interface ServerState { connected: boolean; codexAvailable: boolean; providers: ProviderInfo[]; defaultWorkspace: string; tasks: OfficeTask[]; agents: OfficeAgent[]; schedules?: OfficeSchedule[]; knowledgeVersion?: number; chats?: Record<AgentId, ChatStatus>; office?: OfficeSettings }
+export interface ServerState { connected: boolean; codexAvailable: boolean; providers: ProviderInfo[]; defaultWorkspace: string; tasks: OfficeTask[]; agents: OfficeAgent[]; schedules?: OfficeSchedule[]; knowledgeVersion?: number; mcpVersion?: number; mcpCount?: number; chats?: Record<AgentId, ChatStatus>; office?: OfficeSettings }
 /** Editable fields of a team knowledge note. */
 export interface NoteInput { title: string; body: string; tags: string[]; files: string[] }
 /** A durable note in a project's team knowledge base (drafts await the user's review). */
@@ -107,3 +107,20 @@ export function demoTasks(): OfficeTask[] {
     { id: 'demo-sentinel', agentId: 'sentinel', prompt: 'Check API health and validate current changes.', workspace: 'Demo workspace', status: 'completed', phase: 'idle', createdAt: before(23), updatedAt: before(12), finishedAt: before(12), lastMessage: 'All checks passed.', threadId: null, events: [{ id: 's1', at: before(12), kind: 'success', message: 'Checks completed successfully.' }] },
   ]
 }
+
+/** An office-managed MCP server as the API shows it: secret values are never sent, only their names. */
+export interface McpServer {
+  id: string; name: string; description: string; transport: 'stdio' | 'http';
+  command: string; args: string[]; url: string; envKeys: string[]; headerKeys: string[];
+  agents: 'all' | AgentId[]; enabled: boolean; autoApprove: boolean; createdAt: string; updatedAt: string;
+}
+/** Body for creating or editing an MCP server. A null value keeps a saved secret. */
+export interface McpServerInput {
+  name: string; description: string; transport: 'stdio' | 'http'; command: string; args: string[]; url: string;
+  env: Record<string, string | null>; headers: Record<string, string | null>; agents: 'all' | AgentId[]; enabled: boolean; autoApprove: boolean;
+}
+export interface PluginFeatures { catalog: boolean; toggle: boolean; marketplaces: boolean; installHint: string }
+export interface PluginProviderInfo { id: ProviderId; name: string; available: boolean; features: PluginFeatures }
+export interface InstalledPlugin { id: string; name: string; marketplace: string; version: string; enabled: boolean; scope: string; description: string }
+export interface CatalogPlugin { id: string; name: string; marketplace: string; description: string; version: string; installs: number | null; installed: boolean }
+export interface PluginMarketplace { name: string; source: string }

@@ -3,9 +3,9 @@
 // receives a role-specific execution context.
 import { AGENT_GUIDANCE, knowledgeContext, MCP_GUIDANCE } from './knowledge.mjs'
 
-/** `knowledge`: relevant team notes for this task, and whether the knowledge MCP tools are attached. */
-export function composeAgentPrompt(agent, humanPrompt, knowledge = { notes: [], mcp: false }) {
-  const context = knowledgeContext(knowledge.notes ?? [])
+/** `knowledge`: relevant notes for this task (from any project), the run's project folder, and whether the knowledge MCP tools are attached. */
+export function composeAgentPrompt(agent, humanPrompt, knowledge = { notes: [], mcp: false, workspace: null }) {
+  const context = knowledgeContext(knowledge.notes ?? [], knowledge.workspace ?? null)
   return [
     `You are ${agent.name}, an AI coding assistant working inside Agent Office.`,
     `Your assigned role is ${agent.role}.`,

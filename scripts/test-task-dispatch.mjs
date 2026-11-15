@@ -422,7 +422,7 @@ test('unreadable or malformed private stores are preserved and never silently re
   for (const contents of ['[null]', '{broken', '{"not":"an array"}']) {
     const f = await fixture(t, 'success', { 'tasks.json': contents, 'agents.json': '{broken' })
     const state = (await f.request('/api/state')).body
-    assert.deepEqual(state.storage, { historyReadable: false, agentsReadable: false, schedulesReadable: true, knowledgeReadable: true, chatsReadable: true, officeReadable: true, historyWriteError: false })
+    assert.deepEqual(state.storage, { historyReadable: false, agentsReadable: false, schedulesReadable: true, knowledgeReadable: true, chatsReadable: true, officeReadable: true, mcpReadable: true, historyWriteError: false })
     assert.equal((await f.launch()).status, 503)
     const create = await f.request('/api/agents', 'POST', { name:'Safe',role:'QA',specialty:'Audit',department:'quality',color:'#123456' })
     assert.equal(create.status, 500)

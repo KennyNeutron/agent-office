@@ -18,6 +18,7 @@ import { Studio } from './views/Studio';
 import { TaskList } from './views/Tasks';
 import { Team } from './views/Team';
 import { Settings } from './views/Settings';
+import { Tools } from './views/Tools';
 import { OfficePreferencesContext } from './scene/OfficePreferencesContext';
 import { loadOfficePreferences, normalizeOfficePreferences, OFFICE_PREFERENCES_KEY } from './scene/officePreferences';
 import { loadDemoRoster, makeDemoAgent, saveDemoRoster, validateDemoAgent } from './demo/roster';
@@ -435,7 +436,7 @@ export default function App() {
       <a className="skip-link" href="#main-content">{tr('Skip to content')}</a>
       <Sidebar view={view} setView={setView} onNew={() => showNew()}/>
       <div className="app-main">
-        <header className="topbar"><div className="crumb"><span><Command size={15}/></span>{projectEditable ? <ProjectPill current={workspace} onOpen={() => setProjectOpen(true)}/> : ' ' + tr('My workspace') + ' '}<b>/</b><strong>{tr(view === 'studio' ? 'Office studio' : view === 'tasks' ? 'Activity & tasks' : view === 'team' ? 'Agent team' : 'Settings')}</strong><ChevronDown size={13}/></div>
+        <header className="topbar"><div className="crumb"><span><Command size={15}/></span>{projectEditable ? <ProjectPill current={workspace} onOpen={() => setProjectOpen(true)}/> : ' ' + tr('My workspace') + ' '}<b>/</b><strong>{tr(view === 'studio' ? 'Office studio' : view === 'tasks' ? 'Activity & tasks' : view === 'team' ? 'Agent team' : view === 'tools' ? 'Tools & plugins' : 'Settings')}</strong><ChevronDown size={13}/></div>
           <div className="topbar-actions"><time>{formatTime(now)}</time><i/>{PUBLIC_DEMO ? <span className="api-badge on"><Wifi size={14}/>{tr('Demo environment')}</span> : <span className={cliReady ? 'api-badge on' : 'api-badge'}>{cliReady ? <Wifi size={14}/> : <WifiOff size={14}/>} {tr(cliReady ? 'READY' : online ? 'NOT FOUND' : 'API OFFLINE')}</span>}
             {PUBLIC_DEMO ? <span className="mode-btn demo"><Dot status="amber"/>{tr('DEMO MODE')}</span> : <button className={demo ? 'mode-btn demo' : 'mode-btn live'} aria-pressed={demo} onClick={() => changeMode(!demo)}><Dot status={demo ? 'amber' : online ? 'online' : 'failed'}/>{tr(demo ? 'DEMO MODE' : 'LIVE MODE')} <ChevronDown size={13}/></button>}
             <button type="button" className="theme-toggle" aria-label={tr('Dark mode')} aria-pressed={darkMode} title={tr('Dark mode')} onClick={toggleTheme}>
@@ -451,9 +452,10 @@ export default function App() {
           {view === 'studio' && <Studio tasks={tasks} schedules={schedules} onSchedules={openSchedules} onKnowledge={() => setKnowledgeOpen(true)} project={projectEditable && workspace ? workspace : null} onProject={() => setProjectOpen(true)} selected={inspectedAgent} setSelected={selectAgent} selectedTask={selectedTask} setSelectedTask={setSelectedTask} onNew={() => showNew()} onChat={setChatAgent} demo={demo} ready={cliReady}/>}
           {view === 'tasks' && <TaskList tasks={tasks} onSelect={(id, taskId) => { setSelected(id); setSelectedTask(taskId); setView('studio'); }} cancel={cancel} canCancel={demo || online}/>}
           {view === 'team' && <Team tasks={tasks} providers={server?.providers || []} onTask={showNew} onChat={setChatAgent} onSave={saveAgent} onDelete={deleteAgent} connected={demo || online} demo={demo}/>}
+          {view === 'tools' && <Tools online={online} demo={demo} version={server?.mcpVersion ?? 0} publicPreview={PUBLIC_DEMO}/>}
           {view === 'settings' && <Settings workspace={workspace} office={server?.office} saveProject={path => saveProject(path)} forgetProject={forgetProject} demo={demo} setDemo={changeMode} server={server} online={online} publicPreview={PUBLIC_DEMO}/>}
         </main>
-        <footer><span>© 2026 Agent Office <b>✳</b>{' ' + tr('Made for builders')}</span><span>v0.4.0 <i>·</i>{' ' + tr('Open source')}</span></footer>
+        <footer><span>© 2026 Agent Office <b>✳</b>{' ' + tr('Made for builders')}</span><span>v0.5.0 <i>·</i>{' ' + tr('Open source')}</span></footer>
       </div>
       {modal && agents.length > 0 && <NewTask agent={resolvedSelected} setAgent={selectAgent} provider={provider} setProvider={chooseProvider} providers={server?.providers || []} workspace={workspace} close={() => setModal(false)} start={start} busy={busy} demo={demo} online={online} agentBusy={tasks.some(task => task.agentId === resolvedSelected && task.status === 'running')} error={taskError}/>}
       {projectOpen && projectEditable && <ProjectDialog office={server?.office} current={workspace} save={path => saveProject(path)} forget={forgetProject} online={online} close={() => setProjectOpen(false)}/>}

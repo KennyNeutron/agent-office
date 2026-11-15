@@ -5,7 +5,9 @@ import { mkdir, open, readFile, rename, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { discoverProviders, foldersOverlap, providerCommand, supportsKnowledgeMcp, supportsPermissionMode } from './providers.mjs'
+import { discoverProviders, foldersOverlap, providerCommand, supportsKnowledgeMcp, supportsPermissionMode, userMcpArgs } from './providers.mjs'
+import { MAX_MCP_SERVERS, claudeAllowedTools, claudeMcpConfig, codexMcpOverrides, makeMcpServer, mcpForAgent, publicMcpServer, supportsRunMcp, validStoredMcp, validateMcpInput } from './mcp.mjs'
+import { PLUGIN_FEATURES, PLUGIN_PROVIDERS, commandError, parseCatalog, parseInstalled, parseMarketplaces, pendingCommand, runPluginCommand, searchCatalog, validTarget } from './plugins.mjs'
 import { DEFAULT_AGENTS, makeAgent, validStoredAgents, validateAgent } from './agents.mjs'
 import { composeAgentPrompt } from './agent-prompt.mjs'
 import { MAX_SCHEDULES, isDue, makeSchedule, migrateSchedules, recordRun, staleOnceSchedule, validStoredSchedules, validateSchedule } from './schedules.mjs'
@@ -25,6 +27,9 @@ const KNOWLEDGE_STORE = join(dirname(STORE), 'knowledge.json')
 const KNOWLEDGE_MCP = join(HERE, 'knowledge-mcp.mjs')
 const CHAT_STORE = join(dirname(STORE), 'chats.json')
 const OFFICE_STORE = join(dirname(STORE), 'office.json')
+// Office-managed MCP servers, and the private per-run Claude Code configs made from them.
+const MCP_STORE = join(dirname(STORE), 'mcp.json')
+const RUN_DIR = join(dirname(STORE), 'runs')
 // Interface preferences (theme, appearance, selected agent…) mirrored from the browser.
 const SETTINGS_STORE = join(dirname(STORE), 'settings.json')
 const SETTING_KEY = /^agent-office-[A-Za-z0-9._-]{1,80}$/
@@ -56,6 +61,11 @@ let office = { projectDirectory: null, recentProjects: [] }
 let officePersistChain = Promise.resolve()
 let officeReadable = true
 let settings = {}
+let mcpServers = []
+let mcpPersistChain = Promise.resolve()
+let mcpReadable = true
+// Bumped on every MCP change so open browsers know to refetch.
+let mcpVersion = 0
 let settingsPersistChain = Promise.resolve()
 let settingsReadable = true
 const launchDirectory = () => process.env.AGENT_OFFICE_WORKSPACE || ROOT
@@ -152,9 +162,11 @@ function snapshot() {
     tasks: tasks.map(visible),
     schedules,
     knowledgeVersion,
+    mcpVersion,
+    mcpCount: mcpServers.filter(server => server.enabled).length,
     chats: Object.fromEntries([...new Set([...Object.keys(chats), ...chatRuns.keys()])].map(id =>
       [id, { version: chatVersions.get(id) ?? 0, pending: chatRuns.has(id), count: chats[id]?.length ?? 0 }])),
-    storage: { historyReadable, agentsReadable, schedulesReadable, knowledgeReadable, chatsReadable, officeReadable, historyWriteError },
+    storage: { historyReadable, agentsReadable, schedulesReadable, knowledgeReadable, chatsReadable, officeReadable, mcpReadable, historyWriteError },
   }
 }
 
@@ -248,12 +260,14 @@ async function loadKnowledge() {
   }
 }
 
-/** Knowledge is kept per project folder, keyed by its canonical path. */
+/**
+ * Knowledge is office-wide: notes from every project live together in the app's
+ * data folder. Each note records the canonical path of the project it came from.
+ */
 function canonicalWorkspace(value) {
   if (typeof value !== 'string' || !value || value.length > 1000 || value.includes('\0') || !isAbsolute(value)) return null
   try { return statSync(value).isDirectory() ? realpathSync(value) : null } catch { return null }
 }
-const workspaceNotes = workspace => notes.filter(note => note.workspace === workspace)
 /** Workspace-relative path for a file a run edited, or null when it lies outside the project. */
 function projectPath(workspace, file) {
   const path = isAbsolute(file) ? relative(workspace, file) : file
@@ -446,6 +460,185 @@ app.put('/api/settings', async (req, res) => {
   catch { res.status(500).json({ error: 'Could not save settings.' }) }
 })
 
+// ---- MCP servers -------------------------------------------------------------
+// Serialized, atomic and acknowledged after the write, like the other stores.
+async function loadMcp() {
+  try {
+    const stored = JSON.parse(await readFile(MCP_STORE, 'utf8'))
+    if (validStoredMcp(stored)) mcpServers = stored
+    else throw new Error('Invalid mcp.json; MCP servers are unavailable until the file is repaired.')
+  } catch (error) {
+    if (error.code !== 'ENOENT') { mcpReadable = false; console.error('Could not load MCP servers:', error.message) }
+  }
+}
+function changeMcp(edit) {
+  const operation = mcpPersistChain.then(async () => {
+    if (!mcpReadable) throw new Error('Existing MCP servers are unreadable; refusing to overwrite them.')
+    const update = edit(mcpServers)
+    if (update.error) return update
+    await atomicWrite(MCP_STORE, JSON.stringify(update.next, null, 2))
+    mcpServers = update.next
+    mcpVersion++
+    notifyState()
+    return update
+  })
+  mcpPersistChain = operation.then(() => {}, error => console.error('Could not save MCP servers:', error.message))
+  return operation
+}
+const mcpUnavailable = res => res.status(503).json({ error: 'MCP servers are unreadable. Preserve and repair mcp.json first.' })
+app.get('/api/mcp', (_req, res) => res.json({ servers: mcpServers.map(publicMcpServer), readable: mcpReadable, runProviders: ['claude', 'codex'] }))
+app.post('/api/mcp', async (req, res) => {
+  if (!mcpReadable) return mcpUnavailable(res)
+  try {
+    const result = await changeMcp(current => {
+      if (current.length >= MAX_MCP_SERVERS) return { error: `Add at most ${MAX_MCP_SERVERS} MCP servers.` }
+      const error = validateMcpInput(req.body, { servers: current })
+      if (error) return { error }
+      const server = makeMcpServer(req.body, { id: randomUUID() })
+      return { next: [...current, server], server }
+    })
+    if (result.error) return res.status(400).json({ error: result.error })
+    res.status(201).json({ server: publicMcpServer(result.server) })
+  } catch { res.status(500).json({ error: 'Could not save the MCP server.' }) }
+})
+app.put('/api/mcp/:id', async (req, res) => {
+  if (!mcpReadable) return mcpUnavailable(res)
+  try {
+    const result = await changeMcp(current => {
+      const previous = current.find(server => server.id === req.params.id)
+      if (!previous) return { error: 'MCP server was not found.', status: 404 }
+      // A partial body (e.g. only { enabled }) keeps every other saved field.
+      const input = { ...publicMcpServer(previous), env: Object.fromEntries(Object.keys(previous.env).map(key => [key, null])),
+        headers: Object.fromEntries(Object.keys(previous.headers).map(key => [key, null])), ...req.body }
+      const error = validateMcpInput(input, { servers: current, id: previous.id })
+      if (error) return { error }
+      const server = makeMcpServer(input, { id: previous.id, previous })
+      return { next: current.map(item => item.id === previous.id ? server : item), server }
+    })
+    if (result.error) return res.status(result.status || 400).json({ error: result.error })
+    res.json({ server: publicMcpServer(result.server) })
+  } catch { res.status(500).json({ error: 'Could not save the MCP server.' }) }
+})
+app.delete('/api/mcp/:id', async (req, res) => {
+  if (!mcpReadable) return mcpUnavailable(res)
+  try {
+    const result = await changeMcp(current => current.some(server => server.id === req.params.id)
+      ? { next: current.filter(server => server.id !== req.params.id) } : { error: 'MCP server was not found.' })
+    if (result.error) return res.status(404).json({ error: result.error })
+    res.json({ ok: true })
+  } catch { res.status(500).json({ error: 'Could not delete the MCP server.' }) }
+})
+
+// Per-run Claude Code configs hold secrets; none should outlive the office.
+async function clearRunFiles() { await rm(RUN_DIR, { recursive: true, force: true }).catch(() => {}) }
+/**
+ * The office MCP servers for one task or chat run: CLI arguments, extra environment
+ * for the CLI process, a cleanup function and a line for the task log.
+ */
+async function prepareRunMcp(provider, agentId, runId) {
+  const none = { servers: null, env: null, cleanup: async () => {}, note: '' }
+  const assigned = mcpReadable ? mcpForAgent(mcpServers, agentId) : []
+  if (!assigned.length) return none
+  const names = list => shrink(list.map(server => server.name).join(', '), 200)
+  if (!supportsRunMcp(provider.id)) return { ...none, note: `${provider.name} does not accept MCP servers per run, so ${names(assigned)} ${assigned.length > 1 ? 'were' : 'was'} not attached.` }
+  if (provider.id === 'claude') {
+    const configFile = join(RUN_DIR, `${runId}.mcp.json`)
+    await atomicWrite(configFile, JSON.stringify(claudeMcpConfig(assigned)))
+    return { servers: { configFile, allowedTools: claudeAllowedTools(assigned), codexArgs: [] }, env: null,
+      cleanup: () => rm(configFile, { force: true }).catch(() => {}), note: `MCP servers attached: ${names(assigned)}.` }
+  }
+  const { args, env, skipped } = codexMcpOverrides(assigned)
+  const used = assigned.filter(server => !skipped.includes(server.name))
+  return { servers: { configFile: null, allowedTools: [], codexArgs: args }, env, cleanup: async () => {},
+    note: (used.length ? `MCP servers attached: ${names(used)}.` : '') +
+      (skipped.length ? ` Skipped ${names(assigned.filter(server => skipped.includes(server.name)))}: another server sets the same environment variable to a different value.` : '') }
+}
+
+// ---- Plugins (each CLI's own global plugin system) -----------------------------
+const pluginLocks = new Map()
+const catalogCache = new Map()
+const CATALOG_TTL_MS = 10 * 60_000
+/** One plugin command per CLI at a time, since each one rewrites the CLI's config. */
+function withPluginLock(id, work) {
+  const next = (pluginLocks.get(id) ?? Promise.resolve()).then(work, work)
+  pluginLocks.set(id, next.catch(() => {}))
+  return next
+}
+function pluginProvider(req, res) {
+  const provider = providers.find(item => item.id === req.params.provider)
+  if (!provider || !PLUGIN_PROVIDERS.includes(provider.id)) { res.status(404).json({ error: 'Unknown AI provider.' }); return null }
+  if (!provider.available) { res.status(503).json({ error: `${provider.name} was not found on this computer.` }); return null }
+  return provider
+}
+app.get('/api/plugins', (_req, res) => res.json({ providers: providers.filter(item => PLUGIN_PROVIDERS.includes(item.id))
+  .map(({ id, name, available }) => ({ id, name, available, features: PLUGIN_FEATURES[id] })) }))
+app.get('/api/plugins/:provider', async (req, res) => {
+  const provider = pluginProvider(req, res)
+  if (!provider) return
+  const result = await withPluginLock(provider.id, () => runPluginCommand(provider, 'list'))
+  if (!result.ok) return res.status(502).json({ error: commandError(result.stdout, result.stderr, `Could not list ${provider.name} plugins.`) })
+  res.json({ plugins: parseInstalled(provider.id, result.stdout), features: PLUGIN_FEATURES[provider.id] })
+})
+app.get('/api/plugins/:provider/catalog', async (req, res) => {
+  const provider = pluginProvider(req, res)
+  if (!provider) return
+  if (!PLUGIN_FEATURES[provider.id].catalog) return res.status(400).json({ error: `${provider.name} has no plugin catalog. Install plugins by name or folder.` })
+  let cached = catalogCache.get(provider.id)
+  if (!cached || Date.now() - cached.at > CATALOG_TTL_MS || req.query.refresh === '1') {
+    const result = await withPluginLock(provider.id, () => runPluginCommand(provider, 'catalog'))
+    if (!result.ok) return res.status(502).json({ error: commandError(result.stdout, result.stderr, `Could not load the ${provider.name} plugin catalog.`) })
+    cached = { at: Date.now(), plugins: parseCatalog(provider.id, result.stdout) }
+    catalogCache.set(provider.id, cached)
+  }
+  const query = typeof req.query.q === 'string' ? req.query.q.slice(0, 200) : ''
+  res.json(searchCatalog(cached.plugins, query))
+})
+const PLUGIN_ACTIONS = new Set(['install', 'uninstall', 'enable', 'disable'])
+app.post('/api/plugins/:provider/:action', async (req, res, next) => {
+  if (!PLUGIN_ACTIONS.has(req.params.action)) return next()
+  const provider = pluginProvider(req, res)
+  if (!provider) return
+  const { plugin, scope, acceptCommand } = req.body || {}
+  if (!validTarget(plugin)) return res.status(400).json({ error: `Enter a plugin as ${PLUGIN_FEATURES[provider.id].installHint}.` })
+  if ((req.params.action === 'enable' || req.params.action === 'disable') && !PLUGIN_FEATURES[provider.id].toggle)
+    return res.status(400).json({ error: `${provider.name} plugins cannot be turned off; remove the plugin instead.` })
+  const result = await withPluginLock(provider.id, () => runPluginCommand(provider, req.params.action, plugin, { scope, acceptCommand }))
+  // A marketplace that installs by running a command needs a person to approve that command.
+  const pending = req.params.action === 'install' ? pendingCommand(result.stdout) : null
+  if (pending && !acceptCommand) return res.status(409).json({ error: 'This plugin installs by running a command. Review it before installing.', confirm: pending })
+  catalogCache.delete(provider.id)
+  if (!result.ok) return res.status(502).json({ error: commandError(result.stdout, result.stderr, `${provider.name} could not ${req.params.action} ${plugin}.`) })
+  res.json({ ok: true })
+})
+app.get('/api/plugins/:provider/marketplaces', async (req, res) => {
+  const provider = pluginProvider(req, res)
+  if (!provider) return
+  if (!PLUGIN_FEATURES[provider.id].marketplaces) return res.json({ marketplaces: [] })
+  const result = await withPluginLock(provider.id, () => runPluginCommand(provider, 'marketplaces'))
+  if (!result.ok) return res.status(502).json({ error: commandError(result.stdout, result.stderr, 'Could not list marketplaces.') })
+  res.json({ marketplaces: parseMarketplaces(result.stdout) })
+})
+app.post('/api/plugins/:provider/marketplaces', async (req, res) => {
+  const provider = pluginProvider(req, res)
+  if (!provider) return
+  if (!PLUGIN_FEATURES[provider.id].marketplaces) return res.status(400).json({ error: `${provider.name} does not use plugin marketplaces.` })
+  const source = req.body?.source
+  if (!validTarget(source)) return res.status(400).json({ error: 'Enter a marketplace as owner/repo, a git URL or a folder path.' })
+  const result = await withPluginLock(provider.id, () => runPluginCommand(provider, 'add-marketplace', source))
+  catalogCache.delete(provider.id)
+  if (!result.ok) return res.status(502).json({ error: commandError(result.stdout, result.stderr, 'Could not add the marketplace.') })
+  res.status(201).json({ ok: true })
+})
+app.delete('/api/plugins/:provider/marketplaces/:name', async (req, res) => {
+  const provider = pluginProvider(req, res)
+  if (!provider) return
+  if (!PLUGIN_FEATURES[provider.id].marketplaces || !validTarget(req.params.name)) return res.status(400).json({ error: 'Invalid marketplace.' })
+  const result = await withPluginLock(provider.id, () => runPluginCommand(provider, 'remove-marketplace', req.params.name))
+  catalogCache.delete(provider.id)
+  if (!result.ok) return res.status(502).json({ error: commandError(result.stdout, result.stderr, 'Could not remove the marketplace.') })
+  res.json({ ok: true })
+})
+
 // ---- Agent chat -------------------------------------------------------------
 // Same contract as the roster: serialized, atomic, acknowledged after the write.
 function changeChats(edit, agentId) {
@@ -518,10 +711,14 @@ app.post('/api/agents/:id/chat', async (req, res) => {
     notifyState()
     run.resolveDone()
   }
-  const { command, args, input } = chatCommand(provider, canonical, composeChatPrompt(agent, history, userMessage.text))
+  let runMcp
+  try { runMcp = await prepareRunMcp(provider, agent.id, `chat-${randomUUID()}`) }
+  catch { await finish('Could not prepare the MCP servers for this reply.', true); return res.status(201).json({ message: userMessage, provider: provider.id }) }
+  const { command, args, input } = chatCommand(provider, canonical, composeChatPrompt(agent, history, userMessage.text), userMcpArgs(provider.id, runMcp.servers))
   let child
-  try { child = spawn(command, args, { cwd: canonical, shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }) }
-  catch (error) { await finish(`Could not start ${provider.name}: ${shrink(error.message, 300)}`, true); return res.status(201).json({ message: userMessage, provider: provider.id }) }
+  try { child = spawn(command, args, { cwd: canonical, shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'],
+    ...(runMcp.env ? { env: { ...process.env, ...runMcp.env } } : {}) }) }
+  catch (error) { await runMcp.cleanup(); await finish(`Could not start ${provider.name}: ${shrink(error.message, 300)}`, true); return res.status(201).json({ message: userMessage, provider: provider.id }) }
   run.child = child
   // The output parser is shared with tasks; a scratch record collects the reply and any failure.
   const scratch = { provider: provider.id, events: [], lastMessage: '', phase: 'thinking' }
@@ -533,6 +730,7 @@ app.post('/api/agents/:id/chat', async (req, res) => {
   child.on('error', error => errors.push(shrink(error.message, 400)))
   child.on('close', code => {
     reader.end()
+    void runMcp.cleanup()
     const text = taskReplies.get(scratch)
     if (run.stopped) void finish(run.stopped === 'timeout' ? `No reply within ${Math.round(CHAT_TIMEOUT_MS / 60_000) || 1} minutes, so the request was stopped.` : 'Reply stopped.', true)
     else if (code === 0 && !scratch.failure && text?.trim()) void finish(text.trim())
@@ -575,25 +773,22 @@ function knowledgeRoute(handler) {
   }
 }
 const noteFields = body => ({ title: body?.title, body: body?.body, tags: body?.tags, files: body?.files })
+// Every note from every project; `workspace` (optional) names the project the caller is in.
 app.get('/api/knowledge', knowledgeRoute(async req => {
-  const workspace = canonicalWorkspace(req.query.workspace)
-  if (!workspace) return { error: 'Project directory was not found.' }
   await knowledgePersistChain
-  return { body: { workspace, notes: workspaceNotes(workspace).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)) } }
+  return { body: { workspace: canonicalWorkspace(req.query.workspace), notes: [...notes].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)) } }
 }))
 // Used by the agents' MCP bridge; reads are logged on the task that made them.
 app.get('/api/knowledge/search', knowledgeRoute(async req => {
   const workspace = canonicalWorkspace(req.query.workspace)
-  if (!workspace) return { error: 'Project directory was not found.' }
   const query = typeof req.query.q === 'string' ? req.query.q.slice(0, 500) : ''
-  const results = searchNotes(workspaceNotes(workspace), query, { limit: Math.min(10, Math.max(1, Number(req.query.limit) || 5)) })
+  const results = searchNotes(notes, query, { workspace, limit: Math.min(10, Math.max(1, Number(req.query.limit) || 5)) })
   const task = runningTask(req.query.task)
   if (task) addEvent(task, `Searched team knowledge for "${shrink(query, 60)}" (${results.length} note${results.length === 1 ? '' : 's'}).`)
   return { body: { results } }
 }))
 app.post('/api/knowledge/drafts', knowledgeRoute(async req => {
-  const workspace = canonicalWorkspace(req.body?.workspace)
-  if (!workspace) return { error: 'Project directory was not found.' }
+  const workspace = canonicalWorkspace(req.body?.workspace) ?? ''
   const error = validateNoteInput(noteFields(req.body))
   if (error) return { error }
   const task = runningTask(req.body.taskId)
@@ -605,16 +800,15 @@ app.post('/api/knowledge/drafts', knowledgeRoute(async req => {
   return { status: 201, body: { note: result.note } }
 }))
 app.get('/api/knowledge/:id', knowledgeRoute(async req => {
-  const workspace = canonicalWorkspace(req.query.workspace)
-  const note = notes.find(item => item.id === req.params.id && item.workspace === workspace)
+  const note = notes.find(item => item.id === req.params.id)
   if (!note) return { status: 404, error: 'Note not found.' }
   const task = runningTask(req.query.task)
   if (task) addEvent(task, `Read team note "${shrink(note.title, 60)}".`)
   return { body: { note } }
 }))
+// A note written by hand records the project it was written in, or none for a general note.
 app.post('/api/knowledge', knowledgeRoute(async req => {
-  const workspace = canonicalWorkspace(req.body?.workspace)
-  if (!workspace) return { error: 'Project directory was not found.' }
+  const workspace = canonicalWorkspace(req.body?.workspace) ?? ''
   const error = validateNoteInput(noteFields(req.body))
   if (error) return { error }
   const result = await changeKnowledge(current => {
@@ -816,18 +1010,30 @@ async function launchTask(request, schedule = null) {
     return reply(409, { error: 'Task stopped before launch.' })
   }
 
-  // Team knowledge: the most relevant approved notes go into the instructions, and
+  // Team knowledge (office-wide, from every project): the most relevant approved notes go into the instructions, and
   // Claude Code / Codex also get the knowledge MCP tools for this run.
-  const shared = knowledgeReadable ? relevantNotes(workspaceNotes(canonical), task.prompt) : []
+  const shared = knowledgeReadable ? relevantNotes(notes, task.prompt, canonical) : []
   if (shared.length) addEvent(task, shrink(`Shared ${shared.length} team note${shared.length > 1 ? 's' : ''}: ${shared.map(note => `"${note.title}"`).join(', ')}.`, 300))
   const mcp = knowledgeReadable && supportsKnowledgeMcp(provider.id)
     ? { command: process.execPath, args: [KNOWLEDGE_MCP, '--url', `http://127.0.0.1:${PORT}`, '--workspace', canonical, '--task', task.id, '--agent', agentId] } : null
-  const executionPrompt = composeAgentPrompt(agent, task.prompt, { notes: shared, mcp: Boolean(mcp) })
-  const { command, args, input } = providerCommand(provider, canonical, executionPrompt, permissionMode, mcp)
+  const executionPrompt = composeAgentPrompt(agent, task.prompt, { notes: shared, mcp: Boolean(mcp), workspace: canonical })
+  // Office MCP servers assigned to this agent (Claude Code and Codex only).
+  let runMcp
+  try { runMcp = await prepareRunMcp(provider, agentId, task.id) }
+  catch (error) {
+    active.delete(task.id)
+    task.status = 'failed'; task.phase = 'idle'; task.finishedAt = stamp()
+    task.failure = 'Could not prepare the MCP servers for this run: ' + shrink(error.message, 300); addEvent(task, task.failure, 'error')
+    await persistHistory().catch(() => {})
+    return reply(500, { error: task.failure })
+  }
+  if (runMcp.note) addEvent(task, runMcp.note.trim())
+  const { command, args, input } = providerCommand(provider, canonical, executionPrompt, permissionMode, mcp, runMcp.servers)
   let child
   try { child = spawn(command, args, { cwd: canonical, shell: false, windowsHide: true,
-    detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }) }
+    detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], ...(runMcp.env ? { env: { ...process.env, ...runMcp.env } } : {}) }) }
   catch (error) {
+    await runMcp.cleanup()
     active.delete(task.id)
     task.status = 'failed'; task.phase = 'idle'; task.finishedAt = stamp()
     task.failure = shrink(error.message, 500); addEvent(task, task.failure, 'error')
@@ -857,6 +1063,7 @@ async function launchTask(request, schedule = null) {
     if (running.finalized) return
     active.delete(task.id)
     running.finalized = true
+    await runMcp.cleanup()
     task.exitCode = code; task.signal = signal || null
     task.status = task.cancelRequested ? 'cancelled' : shuttingDown ? 'interrupted'
       : code === 0 && !task.failure && task.outputComplete ? 'completed' : 'failed'
@@ -912,7 +1119,7 @@ app.post('/api/tasks/:id/cancel', async (req, res) => {
   }
 })
 
-await Promise.all([loadHistory(), loadAgents(), loadSchedules(), loadKnowledge(), loadChats(), loadOffice(), loadSettings()])
+await Promise.all([loadHistory(), loadAgents(), loadSchedules(), loadKnowledge(), loadChats(), loadOffice(), loadSettings(), loadMcp(), clearRunFiles()])
 if (existsSync(join(ROOT, 'dist', 'index.html'))) {
   app.use(express.static(join(ROOT, 'dist')))
   app.get('/', (_req, res) => res.sendFile(join(ROOT, 'dist', 'index.html')))
@@ -963,6 +1170,7 @@ export function shutdown() {
     await chatsPersistChain
     await officePersistChain
     await settingsPersistChain
+    await mcpPersistChain
     await schedulesPersistChain
     await knowledgePersistChain
     if (historyReadable) await persistHistory().catch(() => { process.exitCode = 1 })

@@ -1,15 +1,24 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { ArrowLeft, ArrowRight, BookOpen, Check, FileText, Hash, Network, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { ArrowLeft, ArrowRight, BookOpen, Check, FileText, FolderOpen, Hash, Network, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 import type { AgentId, NoteInput, OfficeNote, OfficeTask } from '../types';
 import { useAgents } from '../agents';
 import { Avatar } from './Avatar';
 import { Modal } from './Modal';
 import { readResponse } from './dataFlow';
 import { KnowledgeGraphView } from './KnowledgeGraphView';
-import { LIMITS, makeNote, normalizeTag, searchNotes, validateNoteInput } from '../../server/knowledge.mjs';
+
+// The 3D graph (and three.js) loads only when the graph tab opens; without WebGL the flat graph is used.
+const KnowledgeGraph3D = lazy(() => import('./KnowledgeGraph3D'));
+const WEBGL = (() => {
+  try { const canvas = document.createElement('canvas'); return Boolean(canvas.getContext('webgl2') ?? canvas.getContext('webgl')); }
+  catch { return false; }
+})();
+import { fileNodeId, LIMITS, makeNote, normalizeTag, projectName, searchNotes, validateNoteInput } from '../../server/knowledge.mjs';
 import { activeReaders, KNOWLEDGE_RECENT_MS, knowledgeQueries, knowledgeReaders } from '../scene/knowledgeGraphLayout';
 
 type Tab = 'graph' | 'notes' | 'review' | 'graphify';
+/** Project filter value meaning "every project". */
+const ALL = '\u0000all';
 const LIST_LIMIT = 40;
 
 function ago(at: number, now: number): string {
@@ -42,6 +51,7 @@ function NoteMeta({ note, now }: { note: OfficeNote; now: number }) {
   return <span className="kb-meta">
     {agent ? <><Avatar id={agent.id} size="sm"/>{agent.name}</> : <><BookOpen size={12}/>{note.source === 'manual' ? 'You' : 'Agent'}</>}
     <i>·</i>{note.status === 'draft' ? 'proposed' : 'updated'} {ago(Date.parse(note.updatedAt), now)}
+    <i>·</i><span className="kb-project" title={note.workspace || 'Not tied to a project'}><FolderOpen size={11}/>{note.workspace ? projectName(note.workspace) : 'General'}</span>
   </span>;
 }
 
@@ -83,7 +93,10 @@ function NoteEditor({ note, saving, onSave, onCancel }: { note: OfficeNote | nul
   </form>;
 }
 
-/** The team knowledge base for the current project, plus graphify activity. */
+/**
+ * The office-wide knowledge base: notes learned in every project Agent Office has
+ * worked on, stored in the app's data folder, plus graphify activity.
+ */
 export function KnowledgePanel({ tasks, workspace, demo, online, version, close, onShowTask }: {
   tasks: OfficeTask[];
   workspace: string;
@@ -104,6 +117,7 @@ export function KnowledgePanel({ tasks, workspace, demo, online, version, close,
   const [selected, setSelected] = useState<string | null>(null);
   const [editing, setEditing] = useState<OfficeNote | 'new' | null>(null);
   const [saving, setSaving] = useState(false);
+  const [project, setProject] = useState(ALL);
 
   const load = useCallback(async () => {
     if (demo) return;
@@ -145,11 +159,19 @@ export function KnowledgePanel({ tasks, workspace, demo, online, version, close,
     if (selected === note.id) setSelected(null);
   });
 
-  const active = useMemo(() => notes.filter(note => note.status === 'active'), [notes]);
-  const drafts = useMemo(() => notes.filter(note => note.status === 'draft'), [notes]);
-  const results = useMemo(() => query.trim() ? searchNotes(notes, query, { limit: 200, drafts: true }).map(item => item.note) : null, [notes, query]);
+  // Projects the notes were learned in, most notes first; the filter falls back to all when one disappears.
+  const projects = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const note of notes) counts.set(note.workspace, (counts.get(note.workspace) ?? 0) + 1);
+    return [...counts].sort((a, b) => b[1] - a[1] || projectName(a[0]).localeCompare(projectName(b[0])));
+  }, [notes]);
+  const filter = project !== ALL && projects.some(([workspace]) => workspace === project) ? project : ALL;
+  const shown = useMemo(() => filter === ALL ? notes : notes.filter(note => note.workspace === filter), [notes, filter]);
+  const active = useMemo(() => shown.filter(note => note.status === 'active'), [shown]);
+  const drafts = useMemo(() => shown.filter(note => note.status === 'draft'), [shown]);
+  const results = useMemo(() => query.trim() ? searchNotes(shown, query, { limit: 200, drafts: true, workspace }).map(item => item.note) : null, [shown, query, workspace]);
   // Graph nodes lit by the search: matching notes plus the tags and files they mention.
-  const matches = useMemo(() => results && new Set(results.flatMap(note => [`note:${note.id}`, ...note.tags.map(tag => `tag:${tag}`), ...note.files.map(file => `file:${file}`)])), [results]);
+  const matches = useMemo(() => results && new Set(results.flatMap(note => [`note:${note.id}`, ...note.tags.map(tag => `tag:${tag}`), ...note.files.map(file => fileNodeId(note.workspace, file))])), [results]);
   const chosen = notes.find(note => note.id === selected) ?? null;
   const graphNotes = useMemo(() => [...active, ...drafts], [active, drafts]);
 
@@ -179,7 +201,8 @@ export function KnowledgePanel({ tasks, workspace, demo, online, version, close,
     <div className="modal-title">
       <div><span className="eyebrow"><span /> TEAM KNOWLEDGE</span>
         <h2 id="knowledge-title">Knowledge base <b>✳</b></h2>
-        <p className="kb-workspace" title={workspace}>{demo ? 'Demo notes · changes are not saved' : workspace}</p></div>
+        <p className="kb-workspace">{demo ? 'Demo notes · changes are not saved'
+          : `Learned across ${projects.filter(([path]) => path).length || 'all'} project${projects.filter(([path]) => path).length === 1 ? '' : 's'} · saved in Agent Office on this computer`}</p></div>
       <button type="button" onClick={close} disabled={saving} aria-label="Close"><X size={19}/></button>
     </div>
 
@@ -195,6 +218,10 @@ export function KnowledgePanel({ tasks, workspace, demo, online, version, close,
           </button>)}
         </div>
         {tab !== 'graphify' && <div className="kb-tools">
+          {projects.length > 1 && <select className="kb-project-filter" value={filter} onChange={event => setProject(event.target.value)} aria-label="Show notes from">
+            <option value={ALL}>All projects ({notes.length})</option>
+            {projects.map(([path, count]) => <option key={path} value={path} title={path}>{path ? projectName(path) : 'General'} ({count})</option>)}
+          </select>}
           <label className="kb-search"><Search size={14}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search notes, tags, files" aria-label="Search knowledge"/></label>
           <button type="button" className="primary-btn kb-new" onClick={() => setEditing('new')} disabled={!demo && !online}><Plus size={15}/>New note</button>
         </div>}
@@ -202,7 +229,8 @@ export function KnowledgePanel({ tasks, workspace, demo, online, version, close,
       {error && <p className="kb-error" role="alert">{error}</p>}
 
       {tab === 'graph' && (notes.length ? <div className="kb-graph-layout">
-        <KnowledgeGraphView notes={graphNotes} matches={matches} selectedNote={selected} onSelectNote={setSelected}/>
+        {WEBGL ? <Suspense fallback={<div className="kg-canvas kg-loading" role="status">Loading 3D graph…</div>}><KnowledgeGraph3D notes={graphNotes} matches={matches} selectedNote={selected} onSelectNote={setSelected}/></Suspense>
+          : <KnowledgeGraphView notes={graphNotes} matches={matches} selectedNote={selected} onSelectNote={setSelected}/>}
         <aside className="kb-side">{chosen ? detail(chosen) : <div className="kb-side-help">
           <strong>{active.length} note{active.length === 1 ? '' : 's'}{drafts.length ? ` · ${drafts.length} to review` : ''}</strong>
           <p>Notes link to the tags and files they mention, so related knowledge clusters together. Hover a node to trace its links, click a note to read it, or click a tag or file to see everything connected to it.</p>
@@ -236,7 +264,7 @@ function Empty({ demo, onNew }: { demo: boolean; onNew: () => void }) {
   return <div className="schedule-empty kb-empty">
     <Network size={28}/>
     <strong>No team knowledge yet</strong>
-    <p>Notes capture what your team learns about this project: decisions, conventions, gotchas, how things work. Agents propose notes when they finish tasks and receive the most relevant ones with every new task.</p>
+    <p>Notes capture what your agents learn in every project: decisions, conventions, gotchas, how things work. They are saved in Agent Office itself, so knowledge keeps growing across projects. Agents propose notes when they finish tasks and receive the most relevant ones with every new task.</p>
     {!demo && <button type="button" className="primary-btn" onClick={onNew}><Plus size={15}/>Write the first note</button>}
   </div>;
 }

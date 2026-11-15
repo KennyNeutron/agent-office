@@ -27,7 +27,7 @@ export function Settings({ workspace, office, saveProject, forgetProject, demo, 
     </div>
     <div className="settings-content">
       <section className="setting-card office-customization">
-        <div className="setting-heading"><Palette size={22}/><div><h2>{tr('Office appearance')}</h2><p>{tr('Customize the virtual workspace. Saved only in this browser.')}</p></div></div>
+        <div className="setting-heading"><Palette size={22}/><div><h2>{tr('Office appearance')}</h2><p>{tr('Customize the virtual workspace. Saved on this computer.')}</p></div></div>
         <div className="office-options">
           <div><label htmlFor="office-theme">{tr('Visual style')}</label><select id="office-theme" value={preferences.theme} onChange={e => updatePreferences({ theme: e.target.value as OfficeTheme })}>
             <option value="daylight">{tr('Bright modern')}</option><option value="midnight">{tr('Midnight')}</option><option value="warm">{tr('Warm studio')}</option>

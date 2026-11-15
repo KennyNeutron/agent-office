@@ -6,7 +6,7 @@ import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { capNotes, extractKnowledgeNote, knowledgeContext, knowledgeGraph, makeNote, MAX_DRAFTS_PER_WORKSPACE, relevantNotes, searchNotes, validateNoteInput, validStoredNotes } from '../server/knowledge.mjs'
+import { capNotes, extractKnowledgeNote, fileNodeId, knowledgeContext, knowledgeGraph, makeNote, MAX_DRAFTS, relevantNotes, searchNotes, validateNoteInput, validStoredNotes } from '../server/knowledge.mjs'
 import { composeAgentPrompt } from '../server/agent-prompt.mjs'
 import { DEFAULT_AGENTS } from '../server/agents.mjs'
 import { providerCommand } from '../server/providers.mjs'
@@ -44,13 +44,23 @@ test('search ranks titles and tags above body mentions and hides drafts', () => 
   assert.deepEqual(relevantNotes(notes, 'Rename the sidebar icon'), [], 'unrelated tasks receive no notes')
 })
 
-test('the store stays bounded per workspace, keeping the newest notes', () => {
+test('knowledge is office-wide: every project is searched, the current one ranks first', () => {
+  const here = note({ title: 'Cache invalidation', body: 'Clear the cache on deploy.' }, { workspace: '/projects/shop' })
+  const there = note({ title: 'Cache invalidation', body: 'Clear the cache on deploy.' }, { id: 'there', workspace: '/projects/blog' })
+  assert.deepEqual(searchNotes([there, here], 'cache invalidation').map(item => item.note.workspace).sort(), ['/projects/blog', '/projects/shop'], 'other projects are searched too')
+  assert.equal(searchNotes([there, here], 'cache invalidation', { workspace: '/projects/shop' })[0].note.workspace, '/projects/shop')
+  assert.deepEqual(relevantNotes([there], 'Fix cache invalidation', '/projects/shop').map(item => item.id), ['there'], 'knowledge from another project reaches the task')
+  assert.match(knowledgeContext([there], '/projects/shop'), /- Cache invalidation \[learned in project "blog"\]: /)
+  assert.doesNotMatch(knowledgeContext([here], '/projects/shop'), /learned in project/)
+})
+
+test('the office-wide store stays bounded, keeping the newest notes', () => {
   const at = minutes => new Date(Date.UTC(2026, 0, 1, 0, minutes))
-  const drafts = Array.from({ length: MAX_DRAFTS_PER_WORKSPACE + 5 }, (_, i) => makeNote({ title: 'Draft ' + i, body: 'x' }, { id: 'd' + i, workspace: '/w', status: 'draft', now: at(i) }))
-  const kept = capNotes([...drafts, makeNote({ title: 'Other', body: 'x' }, { id: 'o', workspace: '/other', status: 'draft', now: at(0) })])
-  assert.equal(kept.filter(item => item.workspace === '/w').length, MAX_DRAFTS_PER_WORKSPACE)
-  assert.ok(!kept.some(item => item.id === 'd0') && kept.some(item => item.id === `d${MAX_DRAFTS_PER_WORKSPACE + 4}`), 'oldest drafts go first')
-  assert.ok(kept.some(item => item.id === 'o'), 'other workspaces are untouched')
+  const drafts = Array.from({ length: MAX_DRAFTS + 5 }, (_, i) => makeNote({ title: 'Draft ' + i, body: 'x' }, { id: 'd' + i, workspace: i % 2 ? '/a' : '/b', status: 'draft', now: at(i) }))
+  const kept = capNotes([...drafts, makeNote({ title: 'Kept', body: 'x' }, { id: 'k', workspace: '/other', now: at(0) })])
+  assert.equal(kept.filter(item => item.status === 'draft').length, MAX_DRAFTS, 'drafts are capped across all projects together')
+  assert.ok(!kept.some(item => item.id === 'd0') && kept.some(item => item.id === `d${MAX_DRAFTS + 4}`), 'oldest drafts go first')
+  assert.ok(kept.some(item => item.id === 'k'), 'kept notes are not pushed out by drafts')
 })
 
 test('agents end replies with a KNOWLEDGE NOTE section that becomes a draft', () => {
@@ -89,7 +99,10 @@ test('Claude Code and Codex receive the knowledge MCP server per run; Antigravit
 test('the knowledge graph links notes through shared tags and files and lays out deterministically', () => {
   const notes = [note({ title: 'A', tags: ['x'], files: ['f.ts'] }), note({ title: 'B', tags: ['x'] }), note({ title: 'C' })]
   const graph = knowledgeGraph(notes)
-  assert.deepEqual(graph.nodes.map(node => [node.id, node.degree]), [['note:A', 2], ['note:B', 1], ['note:C', 0], ['tag:x', 2], ['file:f.ts', 1]])
+  assert.deepEqual(graph.nodes.map(node => [node.id, node.degree]), [['note:A', 2], ['note:B', 1], ['note:C', 0], ['tag:x', 2], [fileNodeId('/w', 'f.ts'), 1]])
+  const across = knowledgeGraph([note({ title: 'P', tags: ['x'], files: ['f.ts'] }, { workspace: '/p' }), note({ title: 'Q', tags: ['x'], files: ['f.ts'] }, { workspace: '/q' })])
+  assert.equal(across.nodes.filter(node => node.kind === 'tag').length, 1, 'a tag links knowledge from different projects')
+  assert.equal(across.nodes.filter(node => node.kind === 'file').length, 2, 'the same path in two projects is two files')
   assert.equal(graph.links.length, 3)
   const nodes = graph.nodes.map(node => ({ id: node.id, weight: node.degree }))
   const first = forceLayout(nodes, graph.links), second = forceLayout(nodes, graph.links)
@@ -101,12 +114,18 @@ test('the knowledge graph links notes through shared tags and files and lays out
   const started = performance.now()
   forceLayout(big, big.slice(1).map((node, i) => ({ source: node.id, target: 'n' + Math.floor(i / 3) })))
   assert.ok(performance.now() - started < 3000, 'large graphs lay out quickly')
+  const space = forceLayout(nodes, graph.links, 320, 3)
+  assert.deepEqual([...space], [...forceLayout(nodes, graph.links, 320, 3)], 'the 3D layout is deterministic too')
+  for (const point of space.values()) assert.ok([point.x, point.y, point.z].every(Number.isFinite))
+  assert.ok(new Set([...space.values()].map(point => Math.round(point.z))).size > 1, 'the 3D layout uses depth')
+  const gap = (a, b) => Math.hypot(space.get(a).x - space.get(b).x, space.get(a).y - space.get(b).y, space.get(a).z - space.get(b).z)
+  assert.ok(gap('note:A', 'tag:x') < gap('note:A', 'note:C'), 'linked nodes sit closer in 3D as well')
 })
 
 test('end to end: notes reach the agent, the MCP bridge searches and proposes, and a finished task drafts a note', { timeout: 60000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'agent-office-knowledge-'))
-  const workspace = join(root, 'project'), data = join(root, 'data'), capture = join(root, 'capture.json'), fake = join(root, 'fake-claude.cjs')
-  await Promise.all([mkdir(workspace), mkdir(data)])
+  const workspace = join(root, 'project'), otherProject = join(root, 'other-project'), data = join(root, 'data'), capture = join(root, 'capture.json'), fake = join(root, 'fake-claude.cjs')
+  await Promise.all([mkdir(workspace), mkdir(otherProject), mkdir(data)])
   // A fake Claude Code: talks to the MCP server it was given, then reports an edit and a KNOWLEDGE NOTE.
   await writeFile(fake, `
 const { spawn } = require('node:child_process')
@@ -149,7 +168,11 @@ process.stdin.on('end', async () => {
   try {
     for (let i = 0; i < 100; i++) { try { if ((await fetch(base + '/api/state')).ok) break } catch { /* starting */ } await sleep(70) }
     const project = await realpath(workspace)
-    assert.equal((await request('/api/knowledge?workspace=relative')).status, 400)
+    // Knowledge from another project, and a general note, are part of the same office-wide base.
+    const elsewhere = await request('/api/knowledge', 'POST', { workspace: otherProject, title: 'Worker deploys need a queue drain', body: 'Drain the worker queue before deploying a worker.', tags: ['worker', 'deploy'], files: ['ops/drain.sh'] })
+    assert.equal(elsewhere.body.note.workspace, await realpath(otherProject))
+    const general = await request('/api/knowledge', 'POST', { title: 'Prefer small pull requests', body: 'Reviewers catch more in small changes.', tags: ['review'] })
+    assert.deepEqual([general.status, general.body.note.workspace], [201, ''], 'a note without a project is a general note')
     const created = await request('/api/knowledge', 'POST', { workspace, title: 'Payment retries reuse the order id', body: 'The provider deduplicates by order id.', tags: ['payments'], files: ['src/retry.ts'] })
     assert.equal(created.status, 201)
     assert.equal(created.body.note.workspace, project, 'notes are keyed by the canonical project path')
@@ -163,6 +186,7 @@ process.stdin.on('end', async () => {
     const run = JSON.parse(await readFile(capture, 'utf8'))
     assert.match(run.prompt, /TEAM KNOWLEDGE \(/)
     assert.match(run.prompt, /- Payment retries reuse the order id: The provider deduplicates by order id\./)
+    assert.match(run.prompt, /- Worker deploys need a queue drain \[learned in project "other-project"\]: /, 'knowledge from other projects reaches the task')
     assert.match(run.prompt, /search_knowledge/)
     assert.equal(run.init.result.serverInfo.name, 'agent-office')
     assert.deepEqual(run.list.result.tools.map(tool => tool.name), ['search_knowledge', 'read_note', 'add_note'])
@@ -172,26 +196,27 @@ process.stdin.on('end', async () => {
     assert.equal(run.unknown.error.code, -32601)
 
     const events = finished.events.map(event => event.message)
-    for (const expected of [/^Shared 1 team note: "Payment retries reuse the order id"\.$/, /^Searched team knowledge for "payment retries" \(1 note\)\.$/, /^Read team note/, /^Proposed knowledge note "Webhook signatures/, /^Drafted knowledge note "Retry jobs run at most three times" for review\.$/])
+    for (const expected of [/^Shared 2 team notes: "Worker deploys need a queue drain", "Payment retries reuse the order id"\.$/, /^Searched team knowledge for "payment retries" \(1 note\)\.$/, /^Read team note/, /^Proposed knowledge note "Webhook signatures/, /^Drafted knowledge note "Retry jobs run at most three times" for review\.$/])
       assert.ok(events.some(message => expected.test(message)), `missing event ${expected}: ${events.join(' | ')}`)
 
     const { body: { notes } } = await request('/api/knowledge?' + new URLSearchParams({ workspace }))
     const byTitle = Object.fromEntries(notes.map(item => [item.title, item]))
-    assert.deepEqual(Object.keys(byTitle).sort(), ['Payment retries reuse the order id', 'Retry jobs run at most three times', 'Webhook signatures use the raw body'])
+    assert.deepEqual(Object.keys(byTitle).sort(), ['Payment retries reuse the order id', 'Prefer small pull requests', 'Retry jobs run at most three times', 'Webhook signatures use the raw body', 'Worker deploys need a queue drain'], 'every project\'s notes are listed')
+    assert.equal((await request('/api/knowledge')).body.notes.length, 5, 'listing works without a project too')
     const drafted = byTitle['Retry jobs run at most three times']
     assert.deepEqual([drafted.status, drafted.source, drafted.agentId, drafted.taskId, drafted.tags, drafted.files], ['draft', 'task', 'nova', task.id, ['payments', 'queue'], ['src/retry.ts']])
     assert.deepEqual([byTitle['Webhook signatures use the raw body'].status, byTitle['Webhook signatures use the raw body'].source], ['draft', 'agent'])
     assert.ok((await request('/api/state')).body.knowledgeVersion > version, 'browsers are told knowledge changed')
 
     // Reviewing: drafts are not shared with agents until kept.
-    assert.equal((await request('/api/knowledge/search?' + new URLSearchParams({ workspace, q: 'dead-letter queue' }))).body.results.length, 0)
+    assert.equal((await request('/api/knowledge/search?' + new URLSearchParams({ workspace, q: 'dead-letter' }))).body.results.length, 0)
     const kept = await request(`/api/knowledge/${drafted.id}`, 'PUT', { ...drafted, status: 'active' })
     assert.equal(kept.body.note.status, 'active')
-    assert.equal((await request('/api/knowledge/search?' + new URLSearchParams({ workspace, q: 'dead-letter queue' }))).body.results[0].note.id, drafted.id)
+    assert.equal((await request('/api/knowledge/search?' + new URLSearchParams({ workspace, q: 'dead-letter' }))).body.results[0].note.id, drafted.id)
     assert.equal((await request(`/api/knowledge/${byTitle['Webhook signatures use the raw body'].id}`, 'DELETE')).status, 200)
     assert.equal((await request('/api/knowledge/missing', 'DELETE')).status, 404)
     const stored = JSON.parse(await readFile(join(data, 'knowledge.json'), 'utf8'))
-    assert.equal(stored.length, 2, 'changes are persisted')
+    assert.equal(stored.length, 4, 'changes are persisted')
   } finally {
     if (server.exitCode === null) { const done = once(server, 'exit'); server.kill(); await done }
     await rm(root, { force: true, recursive: true })

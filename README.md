@@ -83,9 +83,9 @@ Beside reception stands a **knowledge graph** hologram that represents your [gra
 
 ### Team knowledge base
 
-Click the hologram or its *Knowledge* label to open the **knowledge base**: durable notes your team keeps about the current project folder (decisions and their reasons, conventions, gotchas, how things work). Notes are stored locally in `knowledge.json` next to the task history, separately for each project folder.
+Click the hologram or its *Knowledge* label to open the **knowledge base**: durable notes about decisions and their reasons, conventions, gotchas and how things work. The knowledge base belongs to Agent Office itself, not to any repository: notes from **every project** the office works on are stored together in `knowledge.json` in the app's data folder, so knowledge keeps accumulating as you switch projects. Each note remembers the project it was learned in (or *General* when written outside one), and a project filter narrows the view.
 
-- **Graph**: a graphify-style map of the notes. Each note links to the tags and files it mentions, so related knowledge clusters together. Drag to pan, scroll to zoom, hover to trace links, click a note to read it, or click a tag or file to highlight everything connected to it. Search lights up matching notes.
+- **Graph**: a 3D graphify-style map of the notes. Each note links to the tags and files it mentions, so related knowledge clusters together, and shared tags connect knowledge across projects. Drag to orbit, right-drag to pan, scroll to zoom, hover to trace links, click a note to read it, or click a tag or file to highlight everything connected to it. Search lights up matching notes.
 - **Notes**: search, read, edit and delete notes, or write one yourself with **New note**.
 - **Review**: drafts proposed by agents. **Keep** shares a draft with the team; **Discard** deletes it. Agents never see drafts.
 - **Graphify activity**: which agents queried graphify, with which tool and for which task.
@@ -109,6 +109,13 @@ Physical layout changes use a short floor transition to rebuild furniture and ch
 Profiles are saved locally in `agents.json` next to the private task history, survive restarts, and are scoped to the current Agent Office data directory. You can safely remove the last agent and rebuild your team from zero. Finished task history stays intact when its agent is removed. Demo mode only simulates activity for existing sample agents; it never consumes CLI tokens.
 
 **Codex Web GPT / Codex desktop integration:** If you use [Codex Web GPT](https://github.com/miuuyy/codex-chatgpt-web), choose the same repository folder to launch a fresh independent CLI task there. The Agent Office does not connect to its tunnel, Native2 bridge, chat, or existing Codex processes. Avoid modifying the same files concurrently in the two apps; the folder conflict guard cannot detect external applications. Your Codex Web GPT configuration and authentication are never changed by setup.
+
+### 🧩 Tools & plugins (MCP servers and CLI plugins)
+
+Open **Tools & plugins** in the sidebar.
+
+- **MCP servers** give agents extra tools (GitHub, databases, docs…). Add one with its start command (stdio) or URL (HTTP), or paste the `mcpServers` JSON snippet from its documentation. Choose which agents may use it and whether its tools run without asking. Servers are saved in the office's data folder (`mcp.json`) and attached to every **Claude Code** and **Codex** task and chat of those agents; your CLIs' own settings are not changed. Antigravity CLI only reads its own global settings, so it does not receive them (the task log says so). API keys in environment variables and headers stay on this computer: the API never shows them again, Claude Code reads them from a private per-run file that is deleted when the run ends, and Codex reads them from its environment, never from the command line.
+- **Plugins** are managed with each CLI's own plugin system (`claude plugin`, `codex plugin`, `agy plugin`): see what is installed, browse and search the Claude Code and Codex marketplaces, install by name, turn plugins on or off (Claude Code and Antigravity), remove them and add marketplaces. These changes also apply when you use the CLI outside Agent Office. When a marketplace installs a plugin by running a command, the office shows that command and installs only after you approve it.
 
 ### 🗓️ Scheduled tasks
 

@@ -1,1 +1,1 @@
-export type View = 'studio' | 'tasks' | 'team' | 'settings';
+export type View = 'studio' | 'tasks' | 'team' | 'tools' | 'settings';
