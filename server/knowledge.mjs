@@ -174,12 +174,17 @@ export const MCP_GUIDANCE = 'Your session also has the agent-office knowledge to
 /** Graph id of a file node: files are project-relative, so the same path in two projects is two nodes. */
 export const fileNodeId = (workspace, file) => `file:${workspace ?? ''}\u0000${file}`
 
+/** Graph id of a project hub node ("" is the hub for general notes). */
+export const projectNodeId = workspace => `project:${workspace ?? ''}`
+
 /**
  * A graphify-style knowledge graph: note nodes connected to the tag and file
  * nodes they mention, so notes sharing a tag or file sit together. Tags are
  * shared across projects, which is how knowledge from different projects links up.
+ * With `projects`, each note also links to a hub for the project it was learned
+ * in, so the overall graph forms one cluster per project, bridged by shared tags.
  */
-export function knowledgeGraph(notes) {
+export function knowledgeGraph(notes, { projects = false } = {}) {
   const nodes = [], links = [], seen = new Map()
   const node = (id, kind, label, extra = {}) => {
     if (!seen.has(id)) { seen.set(id, nodes.length); nodes.push({ id, kind, label, degree: 0, ...extra }) }
@@ -189,6 +194,7 @@ export function knowledgeGraph(notes) {
   for (const note of notes) {
     for (const tag of note.tags) links.push({ source: `note:${note.id}`, target: node(`tag:${tag}`, 'tag', `#${tag}`) })
     for (const file of note.files) links.push({ source: `note:${note.id}`, target: node(fileNodeId(note.workspace, file), 'file', file.split('/').at(-1) || file, { path: file, workspace: note.workspace }) })
+    if (projects) links.push({ source: `note:${note.id}`, target: node(projectNodeId(note.workspace), 'project', projectName(note.workspace) || 'General', { workspace: note.workspace }) })
   }
   for (const link of links) { nodes[seen.get(link.source)].degree++; nodes[seen.get(link.target)].degree++ }
   return { nodes, links }

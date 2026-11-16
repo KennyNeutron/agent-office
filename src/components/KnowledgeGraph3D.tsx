@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, type ThreeEvent } from '@react-three/fiber';
 import { Html, OrbitControls } from '@react-three/drei';
-import { BoxGeometry, BufferAttribute, BufferGeometry, Color, SphereGeometry, Vector3, type Group, type LineBasicMaterial, type Mesh, type MeshBasicMaterial } from 'three';
+import { BoxGeometry, BufferAttribute, BufferGeometry, Color, OctahedronGeometry, SphereGeometry, Vector3, type Group, type LineBasicMaterial, type Mesh, type MeshBasicMaterial } from 'three';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { Maximize, Minus, Plus, RotateCw } from 'lucide-react';
 import type { OfficeNote } from '../types';
@@ -9,14 +9,15 @@ import { useAgents } from '../agents';
 import { knowledgeGraph, type KnowledgeGraphNode } from '../../server/knowledge.mjs';
 import { forceLayout } from './forceLayout';
 
-const NOTE_DEFAULT = '#8b82ff', TAG = '#e0a33a', FILE = '#3ea7a0', DRAFT = '#f2a33a';
-const LINK_LENGTH = { tag: 115, file: 130 } as const;
+const NOTE_DEFAULT = '#8b82ff', TAG = '#e0a33a', FILE = '#3ea7a0', DRAFT = '#f2a33a', PROJECT = '#ec6fa6';
+const LINK_LENGTH = { tag: 115, file: 130, project: 150 } as const;
+const linkKind = (target: string) => target.startsWith('tag:') ? 'tag' : target.startsWith('project:') ? 'project' : 'file';
 const UNIT = .022; // Layout units → world units.
 const ENTRANCE = 1.1, STAGGER = .45, RESUME_SPIN_MS = 6000;
 const LINK = new Color('#7f93b6'), LINK_DIM = new Color('#25324a'), LINK_ON = new Color('#d6e2ff');
-const sphere = new SphereGeometry(1, 20, 14), cube = new BoxGeometry(1.6, 1.6, 1.6);
+const sphere = new SphereGeometry(1, 20, 14), cube = new BoxGeometry(1.6, 1.6, 1.6), diamond = new OctahedronGeometry(1.35);
 
-const radius = (node: KnowledgeGraphNode) => node.kind === 'note' ? .13 + Math.min(.13, node.degree * .025) : .09 + Math.min(.1, node.degree * .02);
+const radius = (node: KnowledgeGraphNode) => node.kind === 'project' ? .26 + Math.min(.14, node.degree * .012) : node.kind === 'note' ? .13 + Math.min(.13, node.degree * .025) : .09 + Math.min(.1, node.degree * .02);
 const truncate = (text: string, max: number) => text.length > max ? text.slice(0, max - 1) + '…' : text;
 const easeOutBack = (t: number) => 1 + 2.2 * (t - 1) ** 3 + 1.2 * (t - 1) ** 2;
 const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -49,20 +50,24 @@ type Layout = { ids: string[]; base: Vector3[]; extent: number; order: number[] 
  * The knowledge graph as a slowly turning 3D cloud: notes (coloured by the agent
  * who wrote them) linked to the tags and files they mention. Drag to orbit,
  * right-drag to pan, scroll to zoom, hover to trace links, click a note to open it.
+ * With `projects`, notes also hang off a hub per project; clicking a hub opens that project.
  */
-export default function KnowledgeGraph3D({ notes, matches, selectedNote, onSelectNote }: {
+export default function KnowledgeGraph3D({ notes, projects = false, onSelectProject, matches, selectedNote, onSelectNote }: {
   notes: OfficeNote[];
+  /** Overall view: add a hub node per project so each project forms its own cluster. */
+  projects?: boolean;
+  onSelectProject?: (workspace: string) => void;
   /** Node ids matching the current search, or null when not searching. */
   matches: Set<string> | null;
   selectedNote: string | null;
   onSelectNote: (noteId: string | null) => void;
 }) {
   const agents = useAgents();
-  const graph = useMemo(() => knowledgeGraph(notes), [notes]);
+  const graph = useMemo(() => knowledgeGraph(notes, { projects }), [notes, projects]);
   const layout = useMemo<Layout>(() => {
     const points = forceLayout(
       graph.nodes.map(node => ({ id: node.id, weight: node.degree })),
-      graph.links.map(link => ({ ...link, length: LINK_LENGTH[link.target.startsWith('tag:') ? 'tag' : 'file'] })),
+      graph.links.map(link => ({ ...link, length: LINK_LENGTH[linkKind(link.target)] })),
       320, 3,
     );
     const ids = graph.nodes.map(node => node.id);
@@ -121,16 +126,17 @@ export default function KnowledgeGraph3D({ notes, matches, selectedNote, onSelec
   const active = hovered ?? focus ?? selectedId;
   const lit = active ? new Set([active, ...(neighbours.get(active) ?? [])]) : matches;
   const dim = (id: string) => Boolean(lit) && !lit!.has(id);
-  const colour = (node: KnowledgeGraphNode) => node.kind === 'tag' ? TAG : node.kind === 'file' ? FILE
+  const colour = (node: KnowledgeGraphNode) => node.kind === 'tag' ? TAG : node.kind === 'file' ? FILE : node.kind === 'project' ? PROJECT
     : agents.find(agent => agent.id === node.agentId)?.color ?? NOTE_DEFAULT;
   // Labels: whatever is highlighted, plus busy tags; everything only while the graph is tiny (3D labels overlap as it turns).
-  const showLabel = (node: KnowledgeGraphNode) => settled && (lit ? lit.has(node.id)
-    : graph.nodes.length <= 14 || (node.kind === 'tag' && node.degree >= 4));
+  const showLabel = (node: KnowledgeGraphNode) => settled && (node.kind === 'project' || (lit ? lit.has(node.id)
+    : graph.nodes.length <= 14 || (node.kind === 'tag' && node.degree >= 4)));
 
   const click = (node: KnowledgeGraphNode, event: ThreeEvent<MouseEvent>) => {
     event.stopPropagation();
     if (event.delta > 4) return; // The end of an orbit drag, not a click.
     if (node.kind === 'note') { setFocus(null); onSelectNote(node.noteId!); }
+    else if (node.kind === 'project' && onSelectProject) onSelectProject(node.workspace ?? '');
     else setFocus(current => current === node.id ? null : node.id);
   };
   const missed = (event: MouseEvent) => {
@@ -142,7 +148,7 @@ export default function KnowledgeGraph3D({ notes, matches, selectedNote, onSelec
   return <div className={`kg-canvas kg-3d${hovered ? ' hovering' : ''}`}
     onPointerDown={event => { press.current = { x: event.clientX, y: event.clientY }; }}
     onPointerLeave={() => setHovered(null)}
-    role="img" aria-label={`3D knowledge graph: ${graph.nodes.filter(node => node.kind === 'note').length} notes linked by tags and files`}>
+    role="img" aria-label={`3D knowledge graph: ${graph.nodes.filter(node => node.kind === 'note').length} notes linked by tags and files${projects ? `, grouped into ${graph.nodes.filter(node => node.kind === 'project').length} projects` : ''}`}>
     <Canvas dpr={[1, 2]} gl={{ antialias: true, alpha: true }} camera={{ fov: 50, near: .1, far: 500, position: [0, cameraDistance * .32, cameraDistance] }}
       onPointerMissed={missed}>
       <fog attach="fog" args={['#111b2e', cameraDistance * .9, cameraDistance * 2.4]}/>
@@ -162,7 +168,7 @@ export default function KnowledgeGraph3D({ notes, matches, selectedNote, onSelec
         className={spinning ? 'on' : ''}><RotateCw size={13}/></button>
     </div>
     <div className="kg-legend" aria-hidden="true">
-      <span><i className="note"/>Note</span><span><i className="tag"/>Tag</span><span><i className="file"/>File</span><span><i className="draft"/>Draft</span>
+      <span><i className="note"/>Note</span><span><i className="tag"/>Tag</span><span><i className="file"/>File</span>{projects && <span><i className="project"/>Project</span>}<span><i className="draft"/>Draft</span>
     </div>
     <ResumeSpin spinning={spinning} setSpinning={setSpinning}/>
   </div>;
@@ -256,7 +262,7 @@ function Scene({ graph, layout, active, dim, colour, selectedId, showLabel, onHo
     {graph.nodes.map((node, i) => {
       const r = radius(node), faded = dim(node.id), hot = node.id === active || node.id === selectedId, tint = colour(node);
       return <group key={node.id} ref={element => { groups.current[i] = element; }} scale={0}>
-        <mesh geometry={node.kind === 'file' ? cube : sphere} scale={r * (hot ? 1.3 : 1)}
+        <mesh geometry={node.kind === 'file' ? cube : node.kind === 'project' ? diamond : sphere} scale={r * (hot ? 1.3 : 1)}
           onPointerOver={event => { event.stopPropagation(); onHover(() => node.id); }}
           onPointerOut={() => onHover(current => current === node.id ? null : current)}
           onClick={event => onClick(node, event)}>
@@ -267,7 +273,7 @@ function Scene({ graph, layout, active, dim, colour, selectedId, showLabel, onHo
           <meshBasicMaterial color={DRAFT} transparent opacity={faded ? .06 : .32} depthWrite={false}/>
         </mesh>}
         {showLabel(node) && <Html center position={[0, -(r + .22), 0]} zIndexRange={[20, 1]} className={`kg3d-label kg3d-${node.kind}${faded ? ' dim' : ''}`}>
-          {truncate(node.label, node.kind === 'note' ? 28 : 22)}
+          {truncate(node.label, node.kind === 'note' || node.kind === 'project' ? 28 : 22)}
         </Html>}
       </group>;
     })}

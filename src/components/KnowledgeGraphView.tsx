@@ -5,11 +5,12 @@ import { useAgents } from '../agents';
 import { knowledgeGraph, type KnowledgeGraphNode } from '../../server/knowledge.mjs';
 import { forceLayout, layoutBounds } from './forceLayout';
 
-const NOTE_DEFAULT = '#8b82ff', TAG = '#e0a33a', FILE = '#3ea7a0';
-const LINK_LENGTH = { tag: 115, file: 130 } as const;
+const NOTE_DEFAULT = '#8b82ff', TAG = '#e0a33a', FILE = '#3ea7a0', PROJECT = '#ec6fa6';
+const LINK_LENGTH = { tag: 115, file: 130, project: 150 } as const;
+const linkKind = (target: string) => target.startsWith('tag:') ? 'tag' : target.startsWith('project:') ? 'project' : 'file';
 const MIN_SCALE = .35, MAX_SCALE = 5;
 
-const radius = (node: KnowledgeGraphNode) => node.kind === 'note' ? 5 + Math.min(5, node.degree * .8) : 3 + Math.min(4, node.degree * .9);
+const radius = (node: KnowledgeGraphNode) => node.kind === 'project' ? 9 + Math.min(5, node.degree * .4) : node.kind === 'note' ? 5 + Math.min(5, node.degree * .8) : 3 + Math.min(4, node.degree * .9);
 const ENTRANCE_MS = 1100, STAGGER_MS = 450;
 const easeOutBack = (t: number) => 1 + 2.2 * (t - 1) ** 3 + 1.2 * (t - 1) ** 2;
 const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -19,19 +20,23 @@ const truncate = (text: string, max: number) => text.length > max ? text.slice(0
  * A graphify-style view of the team knowledge: notes (coloured by the agent
  * who wrote them) linked to the tags and files they mention. Drag to pan,
  * scroll to zoom, hover to trace connections, click a note to open it.
+ * With `projects`, notes also hang off a hub per project; clicking a hub opens that project.
  */
-export function KnowledgeGraphView({ notes, matches, selectedNote, onSelectNote }: {
+export function KnowledgeGraphView({ notes, projects = false, onSelectProject, matches, selectedNote, onSelectNote }: {
   notes: OfficeNote[];
+  /** Overall view: add a hub node per project so each project forms its own cluster. */
+  projects?: boolean;
+  onSelectProject?: (workspace: string) => void;
   /** Node ids matching the current search, or null when not searching. */
   matches: Set<string> | null;
   selectedNote: string | null;
   onSelectNote: (noteId: string | null) => void;
 }) {
   const agents = useAgents();
-  const graph = useMemo(() => knowledgeGraph(notes), [notes]);
+  const graph = useMemo(() => knowledgeGraph(notes, { projects }), [notes, projects]);
   const points = useMemo(() => forceLayout(
     graph.nodes.map(node => ({ id: node.id, weight: node.degree })),
-    graph.links.map(link => ({ ...link, length: LINK_LENGTH[link.target.startsWith('tag:') ? 'tag' : 'file'] })),
+    graph.links.map(link => ({ ...link, length: LINK_LENGTH[linkKind(link.target)] })),
   ), [graph]);
   const bounds = useMemo(() => layoutBounds(points.values()), [points]);
   const neighbours = useMemo(() => {
@@ -121,6 +126,7 @@ export function KnowledgeGraphView({ notes, matches, selectedNote, onSelectNote 
     const node = press.node ? graph.nodes.find(item => item.id === press.node) : null;
     if (!node) { setFocus(null); onSelectNote(null); return; }
     if (node.kind === 'note') { setFocus(null); onSelectNote(node.noteId!); }
+    else if (node.kind === 'project' && onSelectProject) onSelectProject(node.workspace ?? '');
     else setFocus(current => current === node.id ? null : node.id);
   };
 
@@ -128,18 +134,18 @@ export function KnowledgeGraphView({ notes, matches, selectedNote, onSelectNote 
   const active = hovered ?? focus ?? selectedId;
   const lit = active ? new Set([active, ...(neighbours.get(active) ?? [])]) : matches;
   const dim = (id: string) => Boolean(lit) && !lit!.has(id);
-  const showLabel = (node: KnowledgeGraphNode) => lit?.has(node.id) || view.scale > 1.7 ||
+  const showLabel = (node: KnowledgeGraphNode) => node.kind === 'project' || lit?.has(node.id) || view.scale > 1.7 ||
     (node.kind === 'note' ? graph.nodes.length <= 90 : node.degree >= 2 && graph.nodes.length <= 60);
-  const colour = (node: KnowledgeGraphNode) => node.kind === 'tag' ? TAG : node.kind === 'file' ? FILE
+  const colour = (node: KnowledgeGraphNode) => node.kind === 'tag' ? TAG : node.kind === 'file' ? FILE : node.kind === 'project' ? PROJECT
     : agents.find(agent => agent.id === node.agentId)?.color ?? NOTE_DEFAULT;
   const labelSize = 11 / Math.sqrt(view.scale);
-  const labelText = (node: KnowledgeGraphNode) => truncate(node.label, node.kind === 'note' ? 28 : 22);
+  const labelText = (node: KnowledgeGraphNode) => truncate(node.label, node.kind === 'note' || node.kind === 'project' ? 28 : 22);
   // Greedy collision avoidance: highlighted and well-connected nodes claim label
   // space first; a label that would overlap one already placed stays hidden
   // until its node is hovered, selected or zoomed into.
   const labelled = new Set<string>();
   const placed: { x1: number; y1: number; x2: number; y2: number }[] = [];
-  const priority = (node: KnowledgeGraphNode) => (lit?.has(node.id) ? 1000 : 0) + (node.kind === 'note' ? 100 : 0) + node.degree;
+  const priority = (node: KnowledgeGraphNode) => (lit?.has(node.id) ? 1000 : 0) + (node.kind === 'project' ? 500 : node.kind === 'note' ? 100 : 0) + node.degree;
   for (const node of [...graph.nodes].filter(showLabel).sort((a, b) => priority(b) - priority(a))) {
     const point = points.get(node.id)!, r = radius(node);
     // Label box in screen-independent graph units (the group is scaled by view.scale).
@@ -153,7 +159,7 @@ export function KnowledgeGraphView({ notes, matches, selectedNote, onSelectNote 
 
   return <div className="kg-canvas">
     <svg ref={svg} viewBox={`${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`} role="img"
-      aria-label={`Knowledge graph: ${graph.nodes.filter(node => node.kind === 'note').length} notes linked by tags and files`}
+      aria-label={`Knowledge graph: ${graph.nodes.filter(node => node.kind === 'note').length} notes linked by tags and files${projects ? `, grouped into ${graph.nodes.filter(node => node.kind === 'project').length} projects` : ''}`}
       onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerLeave={() => setHovered(null)}>
       <g transform={`translate(${view.x} ${view.y}) scale(${view.scale})`}>
         <g className="kg-links">
@@ -170,10 +176,12 @@ export function KnowledgeGraphView({ notes, matches, selectedNote, onSelectNote 
           const classes = ['kg-node', `kg-${node.kind}`, dim(node.id) ? 'dim' : '', node.id === selectedId ? 'selected' : '', node.status === 'draft' ? 'draft' : ''].filter(Boolean).join(' ');
           return <g key={node.id} data-node={node.id} className={classes} transform={`translate(${x} ${y})`}
             onPointerEnter={() => setHovered(node.id)} onPointerLeave={() => setHovered(current => current === node.id ? null : current)}>
-            <title>{node.kind === 'file' ? node.path : node.label}</title>
+            <title>{node.kind === 'file' ? node.path : node.kind === 'project' ? `${node.workspace || 'General notes'}${onSelectProject ? ' (click to open this project)' : ''}` : node.label}</title>
             <g className="kg-float" opacity={shown} style={{ animationDelay: `${-(index * 0.77) % 6}s`, animationDuration: `${5 + (index % 5) * .6}s` }}>
               {node.id === selectedId && <circle className="kg-pulse" r={r} fill="none" stroke={colour(node)}/>}
-              {node.kind === 'file'
+              {node.kind === 'project'
+                ? <rect x={-r * .78} y={-r * .78} width={r * 1.56} height={r * 1.56} rx={r * .2} transform="rotate(45)" fill={colour(node)}/>
+                : node.kind === 'file'
                 ? <rect x={-r} y={-r} width={r * 2} height={r * 2} rx={r * .35} fill={colour(node)}/>
                 : <circle r={r} fill={colour(node)}/>}
               {labelled.has(node.id) && !settling && <text className="kg-label" y={r + labelSize + 2} fontSize={labelSize} textAnchor="middle">{labelText(node)}</text>}
@@ -188,7 +196,7 @@ export function KnowledgeGraphView({ notes, matches, selectedNote, onSelectNote 
       <button type="button" onClick={() => setView({ scale: 1, x: 0, y: 0 })} aria-label="Fit graph"><Maximize size={13}/></button>
     </div>
     <div className="kg-legend" aria-hidden="true">
-      <span><i className="note"/>Note</span><span><i className="tag"/>Tag</span><span><i className="file"/>File</span><span><i className="draft"/>Draft</span>
+      <span><i className="note"/>Note</span><span><i className="tag"/>Tag</span><span><i className="file"/>File</span>{projects && <span><i className="project"/>Project</span>}<span><i className="draft"/>Draft</span>
     </div>
   </div>;
 }

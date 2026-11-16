@@ -21,5 +21,6 @@ export function searchNotes(notes: OfficeNote[], query: string, options?: { limi
 export function relevantNotes(notes: OfficeNote[], prompt: string, workspace?: string | null): OfficeNote[]
 export function knowledgeContext(notes: OfficeNote[], workspace?: string | null): string
 export function extractKnowledgeNote(reply: unknown): { title: string; body: string; tags: string[]; files: string[] } | null
-export type KnowledgeGraphNode = { id: string; kind: 'note' | 'tag' | 'file'; label: string; degree: number; noteId?: string; agentId?: string | null; status?: OfficeNote['status']; path?: string; workspace?: string }
-export function knowledgeGraph(notes: OfficeNote[]): { nodes: KnowledgeGraphNode[]; links: { source: string; target: string }[] }
+export type KnowledgeGraphNode = { id: string; kind: 'note' | 'tag' | 'file' | 'project'; label: string; degree: number; noteId?: string; agentId?: string | null; status?: OfficeNote['status']; path?: string; workspace?: string }
+export function projectNodeId(workspace: string | null | undefined): string
+export function knowledgeGraph(notes: OfficeNote[], options?: { projects?: boolean }): { nodes: KnowledgeGraphNode[]; links: { source: string; target: string }[] }

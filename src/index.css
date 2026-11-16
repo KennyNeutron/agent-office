@@ -459,7 +459,7 @@ select:focus-visible{outline:3px solid #9a96f2;outline-offset:2px}
 .kb-tabs button.selected{background:white;color:#4d42c9;box-shadow:0 1px 4px #1a234014}
 .kb-tabs b{min-width:17px;height:17px;padding:0 5px;border-radius:9px;background:#e4e2fb;color:#5f53d6;font-size:9px;display:grid;place-items:center}
 .kb-tabs b.attention{background:#f2a33a;color:white}
-.kb-tools{display:flex;gap:8px;align-items:center;flex:1;justify-content:flex-end;min-width:260px}
+.kb-tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center;flex:1;justify-content:flex-end;min-width:260px}
 .modal label.kb-search{display:flex;align-items:center;gap:7px;border:1px solid #e2e6ee;border-radius:9px;background:#fafbfe;padding:0 11px;height:38px;flex:1;max-width:320px;color:#9aa4b2;margin:0!important;letter-spacing:0!important}
 .modal .kb-search input{border:0;outline:0;background:transparent;width:100%;font-size:12px;color:#27324b;padding:0;margin:0;height:100%;min-width:0}
 .kb-new{height:38px;padding:0 13px;font-size:11px;flex:none;display:flex;align-items:center;gap:6px}
@@ -505,7 +505,7 @@ select:focus-visible{outline:3px solid #9a96f2;outline-offset:2px}
 .kg-legend{position:absolute;left:10px;bottom:10px;display:flex;gap:10px;background:#101b2ecc;padding:6px 10px;border-radius:8px;font-size:10px;color:#c5d2e8;pointer-events:none}
 .kg-legend span{display:flex;align-items:center;gap:5px}
 .kg-legend i{width:9px;height:9px;border-radius:50%;background:#8b82ff;display:inline-block}
-.kg-legend i.tag{background:#e0a33a}.kg-legend i.file{background:#3ea7a0;border-radius:2px}.kg-legend i.draft{background:none;border:1.5px dashed #f2a33a}
+.kg-legend i.project{background:#ec6fa6;border-radius:1px;transform:rotate(45deg) scale(.85)}.kg-legend i.tag{background:#e0a33a}.kg-legend i.file{background:#3ea7a0;border-radius:2px}.kg-legend i.draft{background:none;border:1.5px dashed #f2a33a}
 .kb-side{min-width:0;max-height:min(58vh,520px);overflow-y:auto;border:1px solid #e7eaf1;border-radius:14px;padding:14px;background:#fbfcfe}
 .kb-side-help strong{display:block;font-size:13px;color:#27324b;margin-bottom:8px}
 .kb-side-help p{font-size:11px;line-height:1.6;color:#7a8597;margin-bottom:8px}
@@ -516,6 +516,9 @@ select:focus-visible{outline:3px solid #9a96f2;outline-offset:2px}
 .kb-meta{display:flex;align-items:center;gap:6px;font-size:10px;color:#8b96a8;font-weight:700}
 .kb-meta i{font-style:normal}
 .kb-project{display:inline-flex;align-items:center;gap:3px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kb-scope{display:flex;gap:2px;background:#f3f4f9;padding:3px;border-radius:10px;flex:none}
+.kb-scope button{display:flex;align-items:center;gap:5px;height:32px;padding:0 10px;border-radius:8px;background:none;font-size:11px;font-weight:800;color:#6c788c;white-space:nowrap}
+.kb-scope button.selected{background:white;color:#4d42c9;box-shadow:0 1px 4px #1a234014}
 .modal select.kb-project-filter{height:38px;border:1px solid #e2e6ee;border-radius:9px;background:#fafbfe;padding:0 10px;font:inherit;font-size:12px;font-weight:700;color:#4b5565;max-width:190px;margin:0}
 .kb-meta .avatar{width:18px;height:18px;border-radius:5px}
 .kb-body{font-size:12px;line-height:1.65;color:#435069;white-space:pre-wrap;overflow-wrap:anywhere}
@@ -555,6 +558,9 @@ select:focus-visible{outline:3px solid #9a96f2;outline-offset:2px}
   & .kb-tabs button.selected { background: var(--ui-surface); color: var(--ui-accent); }
   & :is(.kb-search,.kb-side,.kb-list>li>button,.kb-editor-row input) { background: var(--ui-surface); border-color: var(--ui-border); }
   & .kb-search input { color: var(--ui-text); }
+  & .kb-scope { background: var(--ui-raised); }
+  & .kb-scope button { color: var(--ui-muted); }
+  & .kb-scope button.selected { background: var(--ui-surface); color: var(--ui-accent); }
   & .kb-project-filter { background: var(--ui-surface); border-color: var(--ui-border); color: var(--ui-text); }
   & :is(.kb-detail h3,.kb-list strong,.kb-side-help strong,.kb-empty strong) { color: var(--ui-text); }
   & :is(.kb-body) { color: #c2cce0; }

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { ArrowLeft, ArrowRight, BookOpen, Check, FileText, FolderOpen, Hash, Network, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, Check, FileText, FolderOpen, Globe, Hash, Network, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 import type { AgentId, NoteInput, OfficeNote, OfficeTask } from '../types';
 import { useAgents } from '../agents';
 import { Avatar } from './Avatar';
@@ -17,8 +17,13 @@ import { fileNodeId, LIMITS, makeNote, normalizeTag, projectName, searchNotes, v
 import { activeReaders, KNOWLEDGE_RECENT_MS, knowledgeQueries, knowledgeReaders } from '../scene/knowledgeGraphLayout';
 
 type Tab = 'graph' | 'notes' | 'review' | 'graphify';
-/** Project filter value meaning "every project". */
-const ALL = '\u0000all';
+/** Overall: every project's notes in one graph, grouped by project hubs. Project: one project's notes. */
+type View = 'overall' | 'project';
+/** Remembered with the other settings (agent-office-* keys are mirrored to the desktop app). */
+const VIEW_KEY = 'agent-office-knowledge-view';
+function savedView(): View {
+  try { return localStorage.getItem(VIEW_KEY) === 'project' ? 'project' : 'overall'; } catch { return 'overall'; }
+}
 const LIST_LIMIT = 40;
 
 function ago(at: number, now: number): string {
@@ -117,7 +122,9 @@ export function KnowledgePanel({ tasks, workspace, demo, online, version, close,
   const [selected, setSelected] = useState<string | null>(null);
   const [editing, setEditing] = useState<OfficeNote | 'new' | null>(null);
   const [saving, setSaving] = useState(false);
-  const [project, setProject] = useState(ALL);
+  const [view, setViewState] = useState<View>(savedView);
+  const setView = (next: View) => { setViewState(next); try { localStorage.setItem(VIEW_KEY, next); } catch { /* preference only */ } };
+  const [project, setProject] = useState(workspace);
 
   const load = useCallback(async () => {
     if (demo) return;
@@ -159,14 +166,19 @@ export function KnowledgePanel({ tasks, workspace, demo, online, version, close,
     if (selected === note.id) setSelected(null);
   });
 
-  // Projects the notes were learned in, most notes first; the filter falls back to all when one disappears.
+  // Projects the notes were learned in, most notes first, plus the open project even before it has notes.
   const projects = useMemo(() => {
     const counts = new Map<string, number>();
     for (const note of notes) counts.set(note.workspace, (counts.get(note.workspace) ?? 0) + 1);
-    return [...counts].sort((a, b) => b[1] - a[1] || projectName(a[0]).localeCompare(projectName(b[0])));
-  }, [notes]);
-  const filter = project !== ALL && projects.some(([workspace]) => workspace === project) ? project : ALL;
-  const shown = useMemo(() => filter === ALL ? notes : notes.filter(note => note.workspace === filter), [notes, filter]);
+    const list = [...counts].sort((a, b) => b[1] - a[1] || projectName(a[0]).localeCompare(projectName(b[0])));
+    return workspace && !counts.has(workspace) ? [...list, [workspace, 0] as [string, number]] : list;
+  }, [notes, workspace]);
+  // The chosen project, falling back to the open one (then the busiest) when it disappears.
+  const current = projects.some(([path]) => path === project) ? project
+    : projects.some(([path]) => path === workspace) ? workspace : projects[0]?.[0] ?? workspace;
+  const overall = view === 'overall';
+  const shown = useMemo(() => overall ? notes : notes.filter(note => note.workspace === current), [notes, overall, current]);
+  const openProject = (path: string) => { setProject(path); setView('project'); setSelected(null); };
   const active = useMemo(() => shown.filter(note => note.status === 'active'), [shown]);
   const drafts = useMemo(() => shown.filter(note => note.status === 'draft'), [shown]);
   const results = useMemo(() => query.trim() ? searchNotes(shown, query, { limit: 200, drafts: true, workspace }).map(item => item.note) : null, [shown, query, workspace]);
@@ -201,8 +213,9 @@ export function KnowledgePanel({ tasks, workspace, demo, online, version, close,
     <div className="modal-title">
       <div><span className="eyebrow"><span /> TEAM KNOWLEDGE</span>
         <h2 id="knowledge-title">Knowledge base <b>✳</b></h2>
-        <p className="kb-workspace">{demo ? 'Demo notes · changes are not saved'
-          : `Learned across ${projects.filter(([path]) => path).length || 'all'} project${projects.filter(([path]) => path).length === 1 ? '' : 's'} · saved in Agent Office on this computer`}</p></div>
+        <p className="kb-workspace" title={overall ? undefined : current || 'Notes not tied to a project'}>{demo ? 'Demo notes · changes are not saved'
+          : overall ? `Overall: learned across ${projects.filter(([path, count]) => path && count).length || 'all'} project${projects.filter(([path, count]) => path && count).length === 1 ? '' : 's'} · saved in Agent Office on this computer`
+          : `Project: ${current ? projectName(current) : 'General notes'}${current ? ` · ${current}` : ''}`}</p></div>
       <button type="button" onClick={close} disabled={saving} aria-label="Close"><X size={19}/></button>
     </div>
 
@@ -218,9 +231,12 @@ export function KnowledgePanel({ tasks, workspace, demo, online, version, close,
           </button>)}
         </div>
         {tab !== 'graphify' && <div className="kb-tools">
-          {projects.length > 1 && <select className="kb-project-filter" value={filter} onChange={event => setProject(event.target.value)} aria-label="Show notes from">
-            <option value={ALL}>All projects ({notes.length})</option>
-            {projects.map(([path, count]) => <option key={path} value={path} title={path}>{path ? projectName(path) : 'General'} ({count})</option>)}
+          <div className="kb-scope" role="radiogroup" aria-label="Knowledge view">
+            <button type="button" role="radio" aria-checked={overall} className={overall ? 'selected' : ''} onClick={() => setView('overall')} title="Every project's notes together"><Globe size={13}/>Overall</button>
+            <button type="button" role="radio" aria-checked={!overall} className={overall ? '' : 'selected'} onClick={() => openProject(current)} title="One project's notes"><FolderOpen size={13}/>By project</button>
+          </div>
+          {!overall && <select className="kb-project-filter" value={current} onChange={event => openProject(event.target.value)} aria-label="Project">
+            {projects.map(([path, count]) => <option key={path} value={path} title={path || 'Notes not tied to a project'}>{path ? projectName(path) : 'General'}{path === workspace ? ' (open)' : ''} ({count})</option>)}
           </select>}
           <label className="kb-search"><Search size={14}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search notes, tags, files" aria-label="Search knowledge"/></label>
           <button type="button" className="primary-btn kb-new" onClick={() => setEditing('new')} disabled={!demo && !online}><Plus size={15}/>New note</button>
@@ -229,11 +245,14 @@ export function KnowledgePanel({ tasks, workspace, demo, online, version, close,
       {error && <p className="kb-error" role="alert">{error}</p>}
 
       {tab === 'graph' && (notes.length ? <div className="kb-graph-layout">
-        {WEBGL ? <Suspense fallback={<div className="kg-canvas kg-loading" role="status">Loading 3D graph…</div>}><KnowledgeGraph3D notes={graphNotes} matches={matches} selectedNote={selected} onSelectNote={setSelected}/></Suspense>
-          : <KnowledgeGraphView notes={graphNotes} matches={matches} selectedNote={selected} onSelectNote={setSelected}/>}
+        {!graphNotes.length ? <div className="kg-canvas kg-loading" role="status">No notes from {current ? projectName(current) : 'general notes'} yet.</div>
+          : WEBGL ? <Suspense fallback={<div className="kg-canvas kg-loading" role="status">Loading 3D graph…</div>}><KnowledgeGraph3D notes={graphNotes} projects={overall} onSelectProject={openProject} matches={matches} selectedNote={selected} onSelectNote={setSelected}/></Suspense>
+          : <KnowledgeGraphView notes={graphNotes} projects={overall} onSelectProject={openProject} matches={matches} selectedNote={selected} onSelectNote={setSelected}/>}
         <aside className="kb-side">{chosen ? detail(chosen) : <div className="kb-side-help">
           <strong>{active.length} note{active.length === 1 ? '' : 's'}{drafts.length ? ` · ${drafts.length} to review` : ''}</strong>
           <p>Notes link to the tags and files they mention, so related knowledge clusters together. Hover a node to trace its links, click a note to read it, or click a tag or file to see everything connected to it.</p>
+          {overall ? <p>Overall view: each project is a pink diamond with its notes around it, and shared tags bridge projects. Click a project to open it on its own.</p>
+            : <p>Showing {current ? projectName(current) : 'general notes'} only. Switch to <button type="button" className="link-btn" onClick={() => setView('overall')}>Overall</button> to see every project together.</p>}
           {results && <p>{results.length} match{results.length === 1 ? '' : 'es'} for “{query}”.</p>}
         </div>}</aside>
       </div> : loaded && <Empty demo={demo} onNew={() => setEditing('new')}/>)}

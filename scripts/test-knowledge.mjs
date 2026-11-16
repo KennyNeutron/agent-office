@@ -6,7 +6,7 @@ import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { capNotes, extractKnowledgeNote, fileNodeId, knowledgeContext, knowledgeGraph, makeNote, MAX_DRAFTS, relevantNotes, searchNotes, validateNoteInput, validStoredNotes } from '../server/knowledge.mjs'
+import { capNotes, extractKnowledgeNote, fileNodeId, projectNodeId, knowledgeContext, knowledgeGraph, makeNote, MAX_DRAFTS, relevantNotes, searchNotes, validateNoteInput, validStoredNotes } from '../server/knowledge.mjs'
 import { composeAgentPrompt } from '../server/agent-prompt.mjs'
 import { DEFAULT_AGENTS } from '../server/agents.mjs'
 import { providerCommand } from '../server/providers.mjs'
@@ -103,6 +103,10 @@ test('the knowledge graph links notes through shared tags and files and lays out
   const across = knowledgeGraph([note({ title: 'P', tags: ['x'], files: ['f.ts'] }, { workspace: '/p' }), note({ title: 'Q', tags: ['x'], files: ['f.ts'] }, { workspace: '/q' })])
   assert.equal(across.nodes.filter(node => node.kind === 'tag').length, 1, 'a tag links knowledge from different projects')
   assert.equal(across.nodes.filter(node => node.kind === 'file').length, 2, 'the same path in two projects is two files')
+  assert.ok(!across.nodes.some(node => node.kind === 'project'), 'project hubs only when asked for')
+  const hubs = knowledgeGraph([note({ title: 'P' }, { workspace: '/a/p' }), note({ title: 'P2' }, { workspace: '/a/p' }), note({ title: 'G' }, { workspace: '' })], { projects: true })
+  assert.deepEqual(hubs.nodes.filter(node => node.kind === 'project').map(node => [node.id, node.label, node.degree]), [[projectNodeId('/a/p'), 'p', 2], [projectNodeId(''), 'General', 1]])
+  assert.ok(hubs.links.some(link => link.source === 'note:P' && link.target === projectNodeId('/a/p')), 'each note links to its project hub')
   assert.equal(graph.links.length, 3)
   const nodes = graph.nodes.map(node => ({ id: node.id, weight: node.degree }))
   const first = forceLayout(nodes, graph.links), second = forceLayout(nodes, graph.links)
