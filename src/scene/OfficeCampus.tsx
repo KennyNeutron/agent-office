@@ -5,6 +5,7 @@ import { Vector3, type Group } from 'three'
 import { DEPARTMENTS } from '../agents'
 import { departmentDecor } from './officeDecor'
 import { COFFEE_TABLE, SOFA } from './loungeLayout'
+import { OfficeWalls } from './OfficeWalls'
 import { DeskClock, WallCalendar } from './ReceptionTimepieces'
 import type { Department } from '../types'
 import type { OfficeLayout, Sector } from './officeLayout'
@@ -193,15 +194,13 @@ function SectorRoom({ sector, preferences, detailed = true }: { sector: Sector; 
         <boxGeometry args={[.40, .006, .095]}/>
         <meshStandardMaterial color={accent} transparent opacity={.35} roughness={.98}/>
       </mesh>)}
-    {/* A shared studio gets real architectural edges without interior walls
-        isolating the team. Low wall cladding leaves the window bays visible. */}
+    {/* Each bay's back wall; the other sides come from OfficeWalls. Low wall cladding leaves the window bays visible. */}
     <group ref={backArchitecture}>
     <RoundedBox position={[0, .59, back + .13]} args={[width - .35, 1.13, .17]} radius={.035} receiveShadow>
       <meshStandardMaterial color={dark ? '#33465c' : '#f6f8f8'} roughness={.91}/>
     </RoundedBox>
     <mesh position={[0, 1.16, back + .25]}><boxGeometry args={[width - .44, .055, .09]}/><meshStandardMaterial color={accent} roughness={.87}/></mesh>
-    {/* Frosted upper glass and mullions give depth to the office without
-        adding partitions between teammates. */}
+    {/* Frosted upper glass and mullions give depth to the office. */}
     <mesh position={[0, 1.98, back + .12]}>
       <boxGeometry args={[width - .42, 1.57, .055]}/>
       <meshStandardMaterial color={palette.window} transparent opacity={dark ? .22 : .13} depthWrite={false} roughness={.28} metalness={.09}/>
@@ -255,7 +254,7 @@ function SharedLounge({ x, z, theme }: { x: number; z: number; theme: OfficePref
   const fabric = theme === 'midnight' ? '#5d7590' : '#7895ad', frame = theme === 'midnight' ? '#4b6077' : '#647f97'
   const { offsetX, seatOffsets, seatTop, depth, length } = SOFA
   return <group position={[x, 0, z]}>
-    <mesh position={[0, .003, 0]} receiveShadow>
+    <mesh position={[0, .003, 0]} scale={[1, 1, .56]} receiveShadow>
       <cylinderGeometry args={[2.15, 2.15, .006, 40]}/><meshStandardMaterial color={theme === 'midnight' ? '#3d5965' : '#c8d7cf'} roughness={1}/>
     </mesh>
     {/* Sofa: base, two seat cushions, backrest and arms. */}
@@ -293,7 +292,7 @@ function SharedLounge({ x, z, theme }: { x: number; z: number; theme: OfficePref
 
 function CoffeePoint({ x, z }: { x: number; z: number }) {
   return <group position={[x, 0, z]}>
-    <mesh position={[0, .003, 0]}><boxGeometry args={[4.9, .006, 2.25]}/><meshStandardMaterial color="#d6dfdb" roughness={1}/></mesh>
+    <mesh position={[0, .003, .22]}><boxGeometry args={[4.9, .006, 1.7]}/><meshStandardMaterial color="#d6dfdb" roughness={1}/></mesh>
     <RoundedBox position={[0, .53, 0]} args={[3.4, 1.06, .7]} radius={.07} castShadow>
       <meshStandardMaterial color="#8298a8" roughness={.76}/>
     </RoundedBox>
@@ -336,11 +335,10 @@ function Reception({ x, z, accent, animate }: { x: number; z: number; accent: st
 
 function SupportWing({ layout, accent, dark }: { layout: OfficeLayout; accent: string; dark: boolean }) {
   return <group>
-    <mesh position={[layout.spineX - 1.7, .002, layout.depth / 2]}><boxGeometry args={[.065, .006, layout.depth - .8]}/><meshStandardMaterial color="#a6bbb8"/></mesh>
     {layout.amenities.filter(amenity => amenity.id === 'meeting' || amenity.id === 'focus').map(amenity => <group key={amenity.key} position={[.55, 0, amenity.z]} rotation={[0, Math.PI / 2, 0]}>
-      <RoundedBox position={[0, 1.25, 0]} args={[3.1, 2.5, .14]} radius={.035}><meshStandardMaterial color={dark ? '#3a5164' : '#d9e3e8'} roughness={.85}/></RoundedBox>
+      <RoundedBox position={[0, 1.25, 0]} args={[amenity.id === 'focus' ? 1.3 : 2.1, 2.5, .14]} radius={.035}><meshStandardMaterial color={dark ? '#3a5164' : '#d9e3e8'} roughness={.85}/></RoundedBox>
       {/* The lounge wall carries the TV (LoungeTV); focus nooks keep a pin board. */}
-      {amenity.id === 'focus' && <Panel x={0} y={1.65} z={.1} w={2.1} h={1.05} color={accent}/>}
+      {amenity.id === 'focus' && <Panel x={0} y={1.65} z={.1} w={1.1} h={.8} color={accent}/>}
     </group>)}
     <Planter x={layout.width - .65} z={layout.depth - .6}/>
     <Planter x={.65} z={layout.depth - .65}/>
@@ -422,6 +420,7 @@ export function OfficeCampus({ layout, preferences, detailedSectorKeys }: { layo
         : amenity.id === 'games' ? null
         : <FocusNook key={amenity.key} x={amenity.x} z={amenity.z}/>)}
     <SupportWing layout={layout} accent={preferences.accent} dark={preferences.theme === 'midnight'}/>
+    <OfficeWalls layout={layout} theme={preferences.theme}/>
     <GlassFacade width={layout.width} depth={layout.depth} theme={preferences.theme}/>
     <ambientLight intensity={.47} color="#e5efff"/>
   </group>

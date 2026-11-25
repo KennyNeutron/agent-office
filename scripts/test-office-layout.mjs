@@ -12,6 +12,7 @@ import { createOfficePets, GREET_OFFSET, pathToAgent, pathToNap, petVisits, step
 import { isSleeping } from '../src/scene/officeSimulation.ts'
 import { PET_FACING } from '../src/scene/officeMotion.ts'
 import { activeReaders, HOLOGRAM_RADIUS, isKnowledgeEvent, KNOWLEDGE_RADIUS, KNOWLEDGE_RECENT_MS, knowledgeGeometry, knowledgeGraphPosition, knowledgeQueries, knowledgeReaders, knowledgeTool } from '../src/scene/knowledgeGraphLayout.ts'
+import { officeWalls, WALL, wallBlocks } from '../src/scene/wallLayout.ts'
 import { RECEPTION_PROPS } from '../src/scene/timepieceLayout.ts'
 import { idleStatus, presentedPose, WORK_POSES } from '../src/scene/agentBehavior.ts'
 
@@ -911,5 +912,44 @@ test('the project files rest on the free end of the reception counter, clear of 
     const reception = layout.amenities.find(item => item.id === 'reception')
     const [x, y, z] = projectFilesPosition(layout)
     assert.deepEqual([x - reception.x, y, z - reception.z].map(value => +value.toFixed(6)), [PROJECT_FILES.x, PROJECT_FILES.y, PROJECT_FILES.z])
+  }
+})
+
+test('interior walls never block agent or pet routes and stay clear of furniture', () => {
+  for (const spacing of ['compact', 'regular', 'spacious']) for (const count of [1, 2, 3, 4, 6, 7, 10, 18, 24, 25, 40, 100]) {
+    for (const team of [makeTeam(count), makeTeam(count).map(agent => ({ ...agent, department: 'engineering' }))]) {
+      const layout = makeOfficeLayout(team, spacing), walls = officeWalls(layout), label = `${count}/${spacing}`
+      assert.ok(walls.some(wall => wall.key === 'games-front') && walls.some(wall => wall.key === 'bay-west-0'), `${label} rooms must be enclosed`)
+      const simulation = reconcileOfficeSimulation(layout)
+      const paths = [...simulation.values()].flatMap(({ plan }) => plan.excursions.flatMap(route => [route.points, ...(route.seat ? [[route.points[route.breakIndex], route.seat]] : [])]))
+      for (const pet of createOfficePets(layout)) {
+        paths.push([pet.bed, ...pathToNap(layout, pet)])
+        for (const id of simulation.keys()) paths.push([pet.bed, ...pathToAgent(layout, simulation, pet, id)])
+      }
+      for (const points of paths) for (let i = 1; i < points.length; i++) for (const wall of walls)
+        assert.equal(wallBlocks(wall, points[i - 1], points[i], .28), false, `${label} ${wall.key} blocks ${points[i - 1]} -> ${points[i]}`)
+      // Footprints: [west, east, north, south].
+      const boxes = layout.seats.map(({ position: [x, , z] }) => [x - 1.25, x + 1.25, z - .88, z + 1.4])
+      for (const { id, x, z } of layout.amenities) {
+        if (id === 'reception') boxes.push([x - 2.35, x + 2.35, z - 1.2, z + .48])
+        if (id === 'coffee') boxes.push([x - 1.78, x + 1.78, z - .57, z + .4])
+        if (id === 'focus') boxes.push([x - .81, x + .81, z - .62, z + .32], [.48, .62, z - .65, z + .65])
+        if (id === 'meeting') boxes.push([x - 1.2, x + 1.8, z - .96, z + .96], [.48, .62, z - 1.05, z + 1.05])
+      }
+      const [kx, , kz] = knowledgeGraphPosition(layout)
+      boxes.push([kx - HOLOGRAM_RADIUS, kx + HOLOGRAM_RADIUS, kz - HOLOGRAM_RADIUS, kz + HOLOGRAM_RADIUS])
+      for (const sector of layout.sectors) {
+        const decor = departmentDecor(sector.id, sector.width, sector.depth)
+        for (const item of [...decor.furniture, ...(decor.planter ? [decor.planter] : [])]) boxes.push([
+          sector.center[0] + item.x - item.width / 2, sector.center[0] + item.x + item.width / 2,
+          sector.center[2] + item.z - item.depth / 2, sector.center[2] + item.z + item.depth / 2])
+      }
+      const half = WALL.thickness / 2
+      for (const wall of walls) for (const [west, east, north, south] of boxes) {
+        const x = wall.axis === 'x' ? [wall.from, wall.to] : [wall.at - half, wall.at + half]
+        const z = wall.axis === 'x' ? [wall.at - half, wall.at + half] : [wall.from, wall.to]
+        assert.equal(x[0] < east && x[1] > west && z[0] < south && z[1] > north, false, `${label} ${wall.key} cuts furniture at ${[west, east, north, south]}`)
+      }
+    }
   }
 })

@@ -31,8 +31,8 @@ function timed(points: Point[], breakIndex: number, breakStage: VisitStage, acti
   return { points, durations, total: durations.reduce((sum, seconds) => sum + seconds, 0) + 12, breakIndex, breakStage, activity, spot, facing, ...(seat ? { seat } : {}) }
 }
 
-// Paths use desk-side aisles and the shared corridor. A coffee visit goes
-// around the outside of each bay, then enters the kitchenette from its aisle.
+// Paths use desk-side aisles and the shared corridor. A coffee visit
+// leaves and re-enters the bay through its doorway (see wallLayout).
 export function makeWalkRoute(seat: Seat, sector: Sector, slot: number, coffee?: CoffeeStop): Route {
   const [x, , z] = seat.position
   const leftEdge = sector.center[0] - sector.width / 2
@@ -45,8 +45,8 @@ export function makeWalkRoute(seat: Seat, sector: Sector, slot: number, coffee?:
     [x + STAND_SIDE_X, z + STAND_Z], [x + STAND_SIDE_X, z + AISLE_Z], [sideAisle, z + AISLE_Z], [sideAisle, front],
     [coffee.spineX ?? sideAisle, front], [coffee.spineX ?? sideAisle, coffee.z + .98],
     [coffee.x, coffee.z + .98],
-    [coffee.spineX ?? sideAisle, coffee.z + .98], [coffee.spineX ?? sideAisle, front + .9], [leftEdge - .55, front + .9],
-    [leftEdge - .55, z + AISLE_Z], [x + STAND_SIDE_X, z + AISLE_Z], [x + STAND_SIDE_X, z + STAND_Z],
+    [coffee.spineX ?? sideAisle, coffee.z + .98], [coffee.spineX ?? sideAisle, front], [sideAisle, front],
+    [sideAisle, z + AISLE_Z], [x + STAND_SIDE_X, z + AISLE_Z], [x + STAND_SIDE_X, z + STAND_Z],
   ] : [
     [x + STAND_SIDE_X, z + STAND_Z], [x + STAND_SIDE_X, z + AISLE_Z], [sideAisle, z + AISLE_Z], [sideAisle, front],
     [loungeX, front], [sideAisle, front], [sideAisle, z + AISLE_Z], [x + STAND_SIDE_X, z + AISLE_Z], [x + STAND_SIDE_X, z + STAND_Z],

@@ -17,7 +17,7 @@ export const SOFA = {
   length: 1.62,
   approach: .45, // stand point in front of each seat
   laneOffset: .55, // walking lane between the sofa and the coffee table
-  entry: 1.6, // lane entry, beyond the sofa's end (z)
+  entry: 1.4, // lane entry, beyond the sofa's end (z)
 }
 export const COFFEE_TABLE = { offsetX: -.4, width: .7, depth: 1.4, height: .45 }
 /** Wall-mounted TV on the service-wing wall (x = .55), facing east into the lounge. */

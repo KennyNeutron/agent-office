@@ -4,7 +4,9 @@ import type { OfficeSpacing } from './officePreferences'
 export type Seat = { agent: OfficeAgent; position: [number, number, number]; sector: Department; sectorKey: string; placement: 'lead' | 'team' }
 export type Sector = { id: Department; key: string; center: [number, number, number]; width: number; depth: number; count: number; row: number }
 export type OfficeAmenity = { id: 'meeting' | 'coffee' | 'focus' | 'reception' | 'games'; key: string; x: number; z: number; aisleZ: number; row: number }
-export type OfficeLayout = { sectors: Sector[]; seats: Seat[]; width: number; depth: number; spineX: number; passages: { x: number; z: number; width: number; depth: number }[]; amenities: OfficeAmenity[] }
+export type OfficeLayout = { sectors: Sector[]; seats: Seat[]; width: number; depth: number; spineX: number; passages: { x: number; z: number; width: number; depth: number }[]; amenities: OfficeAmenity[]
+  /** North and south edges of each row of team bays, and the gap between bays. */
+  rows: { start: number; end: number }[]; gap: number }
 
 /** Depth of the games room strip added below the last row of team bays. */
 export const GAMES_ROOM_DEPTH = 6
@@ -66,11 +68,12 @@ export function makeOfficeLayout(agents: OfficeAgent[], spacing: OfficeSpacing =
     passages.push({ x: (startX + width) / 2, z: aisleZ + .4 * scale, width: width - startX + 1.2 * scale, depth: 1.7 * scale })
     if (agents.length) amenities.push({ id: 'coffee', key: `coffee-${row}`, x: 3.1 * scale,
       z: rowStarts[row] + height - 1.65 * scale, aisleZ, row })
-    if (row === 0 && agents.length >= 3) amenities.push({ id: 'meeting', key: 'meeting', x: 3.0 * scale, z: 7.6 * scale, aisleZ, row })
+    if (row === 0 && agents.length >= 3) amenities.push({ id: 'meeting', key: 'meeting', x: 3.0 * scale, z: 7.9 * scale, aisleZ, row })
     if (row > 0 || agents.length >= 25) amenities.push({ id: 'focus', key: `focus-${row}`, x: 3.0 * scale,
-      z: row > 0 ? rowStarts[row] + 3.1 * scale : 10.1 * scale, aisleZ, row })
+      z: row > 0 ? rowStarts[row] + 3.1 * scale : 10.6 * scale, aisleZ, row })
   })
   passages.push({ x: spineX, z: depth / 2, width: 2.2 * scale, depth: depth - 1.2 * scale })
   if (games) passages.push({ x: width / 2, z: workDepth + .9, width: width - 1.2, depth: 1.4 })
-  return { sectors, seats, width, depth, spineX, passages, amenities }
+  return { sectors, seats, width, depth, spineX, passages, amenities, gap,
+    rows: rowHeights.map((height, row) => ({ start: rowStarts[row], end: rowStarts[row] + height })) }
 }
